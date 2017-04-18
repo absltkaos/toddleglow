@@ -14,7 +14,7 @@ The setup is simple, follow the instructions for getting the PiGlow working. Spe
  1. Install python dependencies: `apt-get install python-flask python-gevent-websocket python-gevent python-arrow python-piglow`
  1. Place the files from the project in a directory and run: `./toddleglow.py`
 
-Browse to the web UI: http://<ip of Pi>:8080
+Browse to the web UI: http://[ip of Pi]:8080
 
 The initial run will create a `config.json` file. You can edit it to suit your needs if you need to change listening address/port etc...
 
