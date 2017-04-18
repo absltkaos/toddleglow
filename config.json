@@ -1,0 +1,13 @@
+{
+    "api_listen": "0.0.0.0", 
+    "api_debug_mode": false, 
+    "api_port": 8080, 
+    "intervals": {
+        "blue": [], 
+        "yellow": [], 
+        "green": [], 
+        "orange": [], 
+        "white": [], 
+        "red": []
+    }
+}
