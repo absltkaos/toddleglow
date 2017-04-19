@@ -6,6 +6,7 @@ import json
 import sys
 import os
 from flask import Flask, request, jsonify
+from geventwebsocket import WebSocketServer, WebSocketApplication, Resource
 
 DEFAULT_CONFIG_PATH = "./config.json"
 CONFIG_PATH = ""
@@ -14,12 +15,18 @@ default_opts = {
     'api_listen': '0.0.0.0',
     'api_port': 8080,
     'api_debug_mode': False,
-    'intervals': {}
+    'intervals': {},
+    'api_rest': True,
+    'api_websocket': True
 }
+server_func = gevent.wsgi.WSGIServer
 config_file = None # This holds our config file object
 config = {} # this holds our config dict
-app = None #This holds our Flask app
+wsgi_app = None #This holds our Flask app
+apps_resource = None
+app = None
 running = True
+channelmsgr = None
 
 ##-Classes-##
 class ToddlerClock:
@@ -254,6 +261,52 @@ class TimeInterval:
         else:
             return False
 
+class Channel():
+    def __init__(self,name,members=None):
+        self.name = name
+        if members:
+            self.members = members
+        else:
+            self.members = []
+    def broadcast(self,msg):
+        for m in self.members:
+            try:
+                m.ws.send(msg)
+            except:
+                raise
+    def subscribe(self,member):
+        self.members.append(member)
+    def unsubscribe(self,member):
+        self.members.remove(member)
+
+class ChannelMgr():
+    def __init__(self):
+        self.channels = {}
+    def add_channel(self,name,members=None):
+        self.channels[name] = Channel(name,members)
+    def broadcast(self,msg):
+        for c in self.channels:
+            self.channels[c].broadcast(msg)
+    def broadcast_to(self,channel,msg):
+        self.channels[channel].broadcast(msg)
+    def subscribe(self,channel,member):
+        self.channels[channel].subscribe(member)
+    def unsubscribe(self,channel,member):
+        self.channels[channel].unsubscribe(member)
+
+class WebsocketApi(WebSocketApplication):
+    def __init__(self, ws):
+        self.protocol = self.protocol_class(self)
+        self.ws = ws
+        channelmsgr.subscribe("status_change",self)
+    def on_open(self):
+        print "Connection opened"
+    def on_message(self, message):
+        self.ws.send(message)
+    def on_close(self, reason):
+        channelmsgr.unsubscribe("status_change",self)
+        print reason
+
 ##-Helper functions-##
 
 def jsonizer(obj):
@@ -268,235 +321,249 @@ def update_config():
     config_file.truncate()
     config_file.write(json.dumps(config,indent=4,default=jsonizer))
     config_file.flush()
-                 
-##-REST API-##
-#Initialize Flask based API
-app=Flask(__name__)
 
-@app.route("/")
-def root():
-    return app.send_static_file('index.html')
+def init_rest_api():
+    #Initialize Flask based API
+    rest_app=Flask(__name__)
+    #Set Flask debug if needed
+    if config['api_debug_mode']:
+        rest_app.debug = True
+    @rest_app.route("/")
+    def root():
+        return rest_app.send_static_file('index.html')
 
-@app.route("/status")
-def status():
-    js = {}
-    get_state = request.args.get('state', 't').lower()
-    get_intervals = request.args.get('intervals', 't').lower()
-    get_color = request.args.get('color','').lower()
-    
-    if get_color:
-        if get_color not in tclock.colors:
-            js['msg'] = "Unknown color:{}".format(get_color)
+    @rest_app.route("/status")
+    def status():
+        js = {}
+        get_state = request.args.get('state', 't').lower()
+        get_intervals = request.args.get('intervals', 't').lower()
+        get_color = request.args.get('color','').lower()
+        
+        if get_color:
+            if get_color not in tclock.colors:
+                js['msg'] = "Unknown color:{}".format(get_color)
+                resp = jsonify(js)
+                resp.status = 400
+                return resp
+        if get_state in ['t','true']:
+            if get_color:
+                js['state'] = tclock.state[get_color]
+            else:
+                js['state'] = tclock.state
+        if get_intervals in ['t','true']:
+            if get_color:
+                js['intervals'] = tclock.timing[get_color]
+            else:
+                js['intervals'] = tclock.timing
+        resp = rest_app.response_class(
+            response=json.dumps(js,indent=4,default=jsonizer),
+            status=200,
+            mimetype='application/json'
+        )
+        return resp
+
+    @rest_app.route("/poll")
+    def force_poll():
+        tclock.poll();
+        js = {
+            'msg': 'Completed',
+            'result': 'Success'
+        }
+        return jsonify(js)
+
+    @rest_app.route("/interval")
+    def intervals():
+        js = tclock.get_interval_ids()
+        resp = rest_app.response_class(
+            response=json.dumps(js,indent=4,default=jsonizer),
+            status=200,
+            mimetype='application/json'
+        )
+        return resp
+
+    @rest_app.route("/interval/<color>")
+    def interval(color):
+        js = tclock.get_interval_ids(color)
+        resp = rest_app.response_class(
+            response=json.dumps(js,indent=4,default=jsonizer),
+            status=200,
+            mimetype='application/json'
+        )
+        return resp
+
+    @rest_app.route("/interval/<color>",methods=["POST"])
+    def create_interval(color):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        status_code = 200
+        interval_settings = { 'color': color }
+        settings_reqd_keys = ['from_time','to_time','brightness']
+        settings_opt_keys = ['brightness_changes']
+        req_json = request.get_json()
+        for rk in settings_reqd_keys:
+            try:
+                interval_settings[rk] = req_json[rk]
+            except KeyError:
+                js['msg'] = 'Missing required key "{}"'.format(rk)
+                js['result'] = "Failed"
+                resp = jsonify(js)
+                resp.status_code = 400
+                return resp
+        for ok in settings_opt_keys:
+            try:
+                interval_settings[ok] = req_json[ok]
+            except KeyError:
+                pass
+        try:
+            tclock.add_interval(**interval_settings)
+            js['msg'] = "Created new interval"
+            js['result'] = "Success"
+            js['interval_id'] = len(tclock.timing[color]) - 1
+            js['interval_settings'] = tclock.get_interval(color,js['interval_id'])
+            js['interval_settings']['time_interval'] = jsonizer(js['interval_settings']['time_interval'])
+            update_config()
+        except:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            js['msg'] = 'Failed: {}'.format(exc_value)
+            js['result'] = 'Failed'
+            status_code = 400
+        resp = jsonify(js)
+        resp.status_code = status_code
+        return resp
+
+    @rest_app.route("/interval/<color>/<interval_id>",methods=["PUT"])
+    def update_interval(color,interval_id):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        status_code = 200
+        changes = False
+        interval_settings = { 
+            'color': color,
+        }
+        settings_opt_keys = ['from_time','to_time','brightness','brightness_changes']
+        req_json = request.get_json()
+        try:
+            i_id = int(interval_id)
+            interval_settings['interval_id'] = int(interval_id)
+        except:
+            js['msg'] = 'Interval id must be an integer'
+            js['result'] = 'Failed'
             resp = jsonify(js)
-            resp.status = 400
+            resp.status_code = 400
             return resp
-    if get_state in ['t','true']:
-        if get_color:
-            js['state'] = tclock.state[get_color]
-        else:
-            js['state'] = tclock.state
-    if get_intervals in ['t','true']:
-        if get_color:
-            js['intervals'] = tclock.timing[get_color]
-        else:
-            js['intervals'] = tclock.timing
-    resp = app.response_class(
-        response=json.dumps(js,indent=4,default=jsonizer),
-        status=200,
-        mimetype='application/json'
-    )
-    return resp
-
-@app.route("/poll")
-def force_poll():
-    tclock.poll();
-    js = {
-        'msg': 'Completed',
-        'result': 'Success'
-    }
-    return jsonify(js)
-
-@app.route("/interval")
-def intervals():
-    js = tclock.get_interval_ids()
-    resp = app.response_class(
-        response=json.dumps(js,indent=4,default=jsonizer),
-        status=200,
-        mimetype='application/json'
-    )
-    return resp
-
-@app.route("/interval/<color>")
-def interval(color):
-    js = tclock.get_interval_ids(color)
-    resp = app.response_class(
-        response=json.dumps(js,indent=4,default=jsonizer),
-        status=200,
-        mimetype='application/json'
-    )
-    return resp
-
-@app.route("/interval/<color>",methods=["POST"])
-def create_interval(color):
-    js = {
-        'msg': '',
-        'result': ''
-    }
-    status_code = 200
-    interval_settings = { 'color': color }
-    settings_reqd_keys = ['from_time','to_time','brightness']
-    settings_opt_keys = ['brightness_changes']
-    req_json = request.get_json()
-    for rk in settings_reqd_keys:
-       try:
-           interval_settings[rk] = req_json[rk]
-       except KeyError:
-           js['msg'] = 'Missing required key "{}"'.format(rk)
-           js['result'] = "Failed"
-           resp = jsonify(js)
-           resp.status_code = 400
-           return resp
-    for ok in settings_opt_keys:
+        for ok in settings_opt_keys:
+            try:
+                changes = True
+                interval_settings[ok] = req_json[ok]
+            except KeyError:
+                pass
         try:
-            interval_settings[ok] = req_json[ok]
+            tclock.update_interval(**interval_settings)
+            js['msg'] = "Updated interval: {}:{}".format(color,interval_id)
+            js['result'] = "Success"
+            js['new_interval_settings'] = tclock.get_interval(color,int(interval_id))
+            js['new_interval_settings']['time_interval'] = jsonizer(js['new_interval_settings']['time_interval'])
+            update_config()
+        except:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            js['msg'] = 'Failed: {}'.format(exc_value)
+            js['result'] = 'Failed'
+            status_code = 400
+        resp = jsonify(js)
+        resp.status_code = status_code
+        return resp
+
+    @rest_app.route("/interval/<color>/<interval_id>",methods=["DELETE"])
+    def delete_interval(color,interval_id):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        status_code = 200
+        try:
+            i_id = int(interval_id)
+        except:
+            js['msg'] = 'Interval id must be an integer'
+            js['result'] = 'Failed'
+            resp = jsonify(js)
+            resp.status_code = 400
+            return resp
+        try:
+            tclock.del_interval(color,i_id)
+            js['msg'] = 'Deleted interval'
+            js['result'] = 'Success'
+            update_config()
+        except:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            js['msg'] = 'Failed: {}'.format(exc_value)
+            js['result'] = 'Failed'
+            status_code = 400
+        resp = jsonify(js)
+        resp.status_code = status_code
+        return resp
+
+    @rest_app.route("/light/<color>",methods=["PUT"])
+    def set_light(color):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        req_json = request.get_json()
+        override_intervals = False
+        try:
+            state = req_json['state'].lower()
+        except KeyError:
+            js['msg'] = 'Missing "state" key'
+            js['result'] = "Failed"
+            resp = jsonify(js)
+            resp.status_code = 400
+            return resp
+        if state not in ['on','off']:
+            js['msg'] = 'Invalid state: {}, must be one of :"on" or "off"'.format(state)
+            js['result'] = 'Failed'
+            resp = jsonify(js)
+            resp.status_code = 400
+            return resp
+        try:
+            override_intervals = req_json['override_intervals']
         except KeyError:
             pass
-    try:
-        tclock.add_interval(**interval_settings)
-        js['msg'] = "Created new interval"
-        js['result'] = "Success"
-        js['interval_id'] = len(tclock.timing[color]) - 1
-        js['interval_settings'] = tclock.get_interval(color,js['interval_id'])
-        js['interval_settings']['time_interval'] = jsonizer(js['interval_settings']['time_interval'])
-        update_config()
-    except:
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        js['msg'] = 'Failed: {}'.format(exc_value)
-        js['result'] = 'Failed'
-        status_code = 400
-    resp = jsonify(js)
-    resp.status_code = status_code
-    return resp
-
-@app.route("/interval/<color>/<interval_id>",methods=["PUT"])
-def update_interval(color,interval_id):
-    js = {
-        'msg': '',
-        'result': ''
-    }
-    status_code = 200
-    changes = False
-    interval_settings = { 
-        'color': color,
-     }
-    settings_opt_keys = ['from_time','to_time','brightness','brightness_changes']
-    req_json = request.get_json()
-    try:
-        i_id = int(interval_id)
-        interval_settings['interval_id'] = int(interval_id)
-    except:
-        js['msg'] = 'Interval id must be an integer'
-        js['result'] = 'Failed'
-        resp = jsonify(js)
-        resp.status_code = 400
-        return resp
-    for ok in settings_opt_keys:
-        try:
-            changes = True
-            interval_settings[ok] = req_json[ok]
-        except KeyError:
-            pass
-    try:
-        tclock.update_interval(**interval_settings)
-        js['msg'] = "Updated interval: {}:{}".format(color,interval_id)
-        js['result'] = "Success"
-        js['new_interval_settings'] = tclock.get_interval(color,int(interval_id))
-        js['new_interval_settings']['time_interval'] = jsonizer(js['new_interval_settings']['time_interval'])
-        update_config()
-    except:
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        js['msg'] = 'Failed: {}'.format(exc_value)
-        js['result'] = 'Failed'
-        status_code = 400
-    resp = jsonify(js)
-    resp.status_code = status_code
-    return resp
-
-@app.route("/interval/<color>/<interval_id>",methods=["DELETE"])
-def delete_interval(color,interval_id):
-    js = {
-        'msg': '',
-        'result': ''
-    }
-    status_code = 200
-    try:
-        i_id = int(interval_id)
-    except:
-        js['msg'] = 'Interval id must be an integer'
-        js['result'] = 'Failed'
-        resp = jsonify(js)
-        resp.status_code = 400
-        return resp
-    try:
-        tclock.del_interval(color,i_id)
-        js['msg'] = 'Deleted interval'
+        if state == 'on':
+            try:
+                brightness = int(req_json['brightness'])
+            except KeyError:
+                brightness = 255
+                pass
+            tclock.turn_on(color,brightness,override_intervals)
+            js['msg'] = 'Turned color: {} ON'.format(color)
+        if state == 'off':
+            tclock.turn_off(color,override_intervals)
+            js['msg'] = 'Turned color: {} OFF'.format(color)
         js['result'] = 'Success'
-        update_config()
-    except:
-        exc_type, exc_value, exc_traceback = sys.exc_info()
-        js['msg'] = 'Failed: {}'.format(exc_value)
-        js['result'] = 'Failed'
-        status_code = 400
-    resp = jsonify(js)
-    resp.status_code = status_code
-    return resp
+        resp = jsonify(js)
+        return resp
+    return rest_app
 
-@app.route("/light/<color>",methods=["PUT"])
-def set_light(color):
-    js = {
-        'msg': '',
-        'result': ''
+def init_websocket_api():
+    res_map = {
+        '/websocket': WebsocketApi,
     }
-    req_json = request.get_json()
-    override_intervals = False
-    try:
-        state = req_json['state'].lower()
-    except KeyError:
-        js['msg'] = 'Missing "state" key'
-        js['result'] = "Failed"
-        resp = jsonify(js)
-        resp.status_code = 400
-        return resp
-    if state not in ['on','off']:
-        js['msg'] = 'Invalid state: {}, must be one of :"on" or "off"'.format(state)
-        js['result'] = 'Failed'
-        resp = jsonify(js)
-        resp.status_code = 400
-        return resp
-    try:
-        override_intervals = req_json['override_intervals']
-    except KeyError:
-        pass
-    if state == 'on':
-        try:
-            brightness = int(req_json['brightness'])
-        except KeyError:
-            brightness = 255
-            pass
-        tclock.turn_on(color,brightness,override_intervals)
-        js['msg'] = 'Turned color: {} ON'.format(color)
-    if state == 'off':
-        tclock.turn_off(color,override_intervals)
-        js['msg'] = 'Turned color: {} OFF'.format(color)
-    js['result'] = 'Success'
-    resp = jsonify(js)
-    return resp
+    if wsgi_app:
+        res_map['^(?!/websocket)'] = wsgi_app
+    resource = Resource(res_map)
+    cm = ChannelMgr()
+    cm.add_channel("status_change")
+    return (resource,cm)
 
 ##-Main-##
 #Change into the directory where this script was run from:
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
-#Load our config file
 
+#Load our config file
 if len(sys.argv) > 1:
     CONFIG_PATH=sys.argv[1]
 
@@ -522,9 +589,27 @@ except:
     print("Error reading in config file at: {}".format(REAL_CONFIG_PATH))
     raise
 
-#Set Flask debug if needed
-if config['api_debug_mode']:
-    app.debug = True
+#Start APIs
+if config['api_rest']:
+    wsgi_app=init_rest_api()
+    app=wsgi_app
+if config['api_websocket']:
+    apps_resource = init_websocket_api()
+
+if apps_resource or wsgi_app:
+    if wsgi_app:
+        app = wsgi_app
+    if apps_resource:
+        app = apps_resource[0]
+        channelmsgr = apps_resource[1]
+        server_func = WebSocketServer
+    #Create a WSGI server
+    wsgi = server_func(
+        listener=(config['api_listen'], config['api_port']),
+        application=app
+    )
+    #Start the WSGI server
+    wsgi.start()
 
 #Initialize our clock
 tclock = ToddlerClock()
@@ -537,14 +622,6 @@ for c in config['intervals']:
 
 #Update our config obj and save to file
 update_config()
-
-#Create a WSGI server
-wsgi = gevent.wsgi.WSGIServer(
-    listener=(config['api_listen'], config['api_port']),
-    application=app
-)
-#Start the WSGI server
-wsgi.start()
 
 #Event Loop
 print("Running...")

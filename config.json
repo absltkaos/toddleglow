@@ -1,5 +1,7 @@
 {
     "api_listen": "0.0.0.0", 
+    "api_rest": true, 
+    "api_websocket": true
     "api_debug_mode": false, 
     "api_port": 8080, 
     "intervals": {
@@ -9,5 +11,5 @@
         "orange": [], 
         "white": [], 
         "red": []
-    }
+    }, 
 }
