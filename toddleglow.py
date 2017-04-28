@@ -30,7 +30,7 @@ channelmsgr = None
 
 ##-Classes-##
 class ToddlerClock:
-    def __init__(self):
+    def __init__(self,channel_com=None):
         self.colors = ['blue', 'yellow', 'green', 'orange', 'white', 'red']
         self.timing = {}
         self.state = {}
@@ -41,6 +41,7 @@ class ToddlerClock:
                 'override_intervals': False
             }
             self.timing[c] = []
+        self.channel_com = channel_com
         piglow.auto_update = True
         piglow.clear();
     def _active_interval(self,color):
@@ -63,6 +64,7 @@ class ToddlerClock:
     def poll(self):
         cur_datetime = arrow.utcnow().to('US/Mountain')
         cur_time = cur_datetime.strftime("%H:%M")
+        states_changed = {}
         #print("{}: Checking light timing status".format(cur_datetime))
         for color in self.state:
             if self.state[color]['override_intervals']:
@@ -71,13 +73,8 @@ class ToddlerClock:
             if ai != None:
                 #There is an active interval, act according to interval settings
                 i = self.timing[color][ai]
-                if not self.state[color]['on']:
-                    print("Turning color: {} on".format(color))
-                    self.turn_on(color,i['brightness'])
-                else:
-                    if self.state[color]['brightness'] != i['brightness']:
-                        self.turn_on(color,i['brightness'])
-                #Adjust brightness if there are changes
+                brightness = i['brightness']
+                #Adjust find possible new brightness level
                 if self.state[color]['on']:
                     bkeys = sorted(list(i['brightness_change_at']),key=self._human_keys)
                     bkeys.reverse()
@@ -85,16 +82,21 @@ class ToddlerClock:
                         ti = TimeInterval(bt,i['time_interval'].to_time)
                         if ti.now_in_interval():
                             del(ti)
-                            b = i['brightness_change_at'][bt]
-                            if self.state[color]['brightness'] != i['brightness_change_at'][bt]:
-                                print("Adjusting brightness of color: {} to {}".format(color,b))
-                                self.turn_on(color,b)
+                            brightness = i['brightness_change_at'][bt]
                             break
+                if self.state[color]['brightness'] != brightness:
+                    print("Setting color: {} on and to brightness level: {}".format(color,brightness))
+                    self.turn_on(color,brightness)
+                    states_changed[color] = dict(self.state[color])
             else:
                 #No active intervals, so turn off color if 'on'
                 if self.state[color]['on']:
                     print("Turning color: {} off".format(color))
                     self.turn_off(color)
+                    states_changed[color] = dict(self.state[color])
+        if states_changed:
+            if self.channel_com:
+                self.channel_com.broadcast_to("status_changes",json.dumps(states_changed))
     def turn_on(self,color,brightness=255,override_intervals=None):
         try:
             self.state[color]['on'] = True
@@ -298,14 +300,198 @@ class WebsocketApi(WebSocketApplication):
     def __init__(self, ws):
         self.protocol = self.protocol_class(self)
         self.ws = ws
-        channelmsgr.subscribe("status_change",self)
+        self.cmds = {
+            'status': self.status,
+            'poll': self.poll,
+            'get_intervals': self.get_intervals,
+            'new_interval': self.new_interval,
+            'update_interval': self.update_interval,
+            'delete_interval': self.delete_interval,
+            'change_light': self.change_light,
+        }
+        channelmsgr.subscribe("status_changes",self)
     def on_open(self):
-        print "Connection opened"
+        print("Connection opened")
+        self.ws.send(json.dumps({
+            'command': 'server_response',
+            'data': 'Connected'
+        }))
+        pass
     def on_message(self, message):
-        self.ws.send(message)
+        if message:
+            print("Got Message: {}".format(message.__repr__()))
+            m = json.loads(message)
+            md = json.loads(m['data'])
+            cmd = md['command']
+            #print("Sending these args to: {}\n{}".format(cmd,json.dumps(md,indent=4)));
+            try:
+                res = self.cmds[cmd](**md)
+            except KeyError:
+                res = {
+                    "msg": "Failed: Unknown command: {}".format(cmd),
+                    "result": "Failed"
+                }
+            except:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                res = {
+                    'msg': 'Failed: {}'.format(exc_value),
+                    'result': 'Failed'
+                }
+            res['command'] = 'server_response'
+            res['mid'] = m['mid']
+            self.ws.send(json.dumps(res,default=jsonizer))
     def on_close(self, reason):
         channelmsgr.unsubscribe("status_change",self)
-        print reason
+        print("Connection Closed")
+    def status(self,state=True,intervals=True,color=None,**kwargs):
+        js = {
+            'msg': 'Completed',
+            'result': 'Success'
+        }
+        if color:
+            if color not in tclock.colors:
+                js['msg'] = "Unknown color:{}".format(get_color)
+                js['result'] = "Failed"
+        if state in ['t','true',True]:
+            if color:
+                js['state'] = tclock.state[color]
+            else:
+                js['state'] = tclock.state
+        if intervals in ['t','true', True]:
+            if color:
+                js['intervals'] = tclock.timing[color]
+            else:
+                js['intervals'] = tclock.timing
+        return js
+    def poll(self,**kwargs):
+        tclock.poll();
+        js = {
+            'msg': 'Completed',
+            'result': 'Success'
+        }
+        return js
+    def get_intervals(self,color=None,**kwargs):
+        js = {}
+        js['intervals'] = tclock.get_interval_ids(color)
+        js['result'] = 'Success'
+        js['msg'] = 'Completed'
+        return js
+    def new_interval(self,color,interval_details,**kwargs):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        interval_settings = { 'color': color }
+        settings_reqd_keys = ['from_time','to_time','brightness']
+        settings_opt_keys = ['brightness_changes']
+        for rk in settings_reqd_keys:
+            try:
+                interval_settings[rk] = interval_details[rk]
+            except KeyError:
+                js['msg'] = 'Missing required key "{}"'.format(rk)
+                js['result'] = "Failed"
+                return js
+        for ok in settings_opt_keys:
+            try:
+                interval_settings[ok] = interval_details[ok]
+            except KeyError:
+                pass
+        try:
+            tclock.add_interval(**interval_settings)
+            js['msg'] = "Created new interval"
+            js['result'] = "Success"
+            js['interval_id'] = len(tclock.timing[color]) - 1
+            js['interval_settings'] = tclock.get_interval(color,js['interval_id'])
+            js['interval_settings']['time_interval'] = jsonizer(js['interval_settings']['time_interval'])
+            update_config()
+        except:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            js['msg'] = 'Failed: {}'.format(exc_value)
+            js['result'] = 'Failed'
+        return js
+    def update_interval(self,color,interval_id,interval_details,**kwargs):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        changes = False
+        interval_settings = {
+            'color': color,
+        }
+        settings_opt_keys = ['from_time','to_time','brightness','brightness_changes']
+        try:
+            i_id = int(interval_id)
+            interval_settings['interval_id'] = int(interval_id)
+        except:
+            js['msg'] = 'Interval id must be an integer'
+            js['result'] = 'Failed'
+            return js
+        for ok in settings_opt_keys:
+            try:
+                changes = True
+                interval_settings[ok] = interval_details[ok]
+            except KeyError:
+                pass
+        try:
+            tclock.update_interval(**interval_settings)
+            js['msg'] = "Updated interval: {}:{}".format(color,interval_id)
+            js['result'] = "Success"
+            js['new_interval_settings'] = tclock.get_interval(color,int(interval_id))
+            js['new_interval_settings']['time_interval'] = jsonizer(js['new_interval_settings']['time_interval'])
+            update_config()
+        except:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            js['msg'] = 'Failed: {}'.format(exc_value)
+            js['result'] = 'Failed'
+        return js
+    def delete_interval(self,color,interval_id,**kwargs):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        try:
+            i_id = int(interval_id)
+        except:
+            js['msg'] = 'Interval id must be an integer'
+            js['result'] = 'Failed'
+            return js
+        try:
+            tclock.del_interval(color,i_id)
+            js['msg'] = 'Deleted interval'
+            js['result'] = 'Success'
+            update_config()
+        except:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            js['msg'] = 'Failed: {}'.format(exc_value)
+            js['result'] = 'Failed'
+        return js
+    def change_light(self,color,state,brightness=None,override_intervals=False,**kwargs):
+        js = {
+            'msg': '',
+            'result': ''
+        }
+        try:
+            state = state.lower()
+        except KeyError:
+            js['msg'] = 'Missing "state" key'
+            js['result'] = "Failed"
+            return js
+        if state not in ['on','off']:
+            js['msg'] = 'Invalid state: {}, must be one of :"on" or "off"'.format(state)
+            js['result'] = 'Failed'
+            return js
+        if state == 'on':
+            if brightness:
+                brightness = int(brightness)
+            else:
+                brightness = 255
+            tclock.turn_on(color,brightness,override_intervals)
+            js['msg'] = 'Turned color: {} ON'.format(color)
+        if state == 'off':
+            tclock.turn_off(color,override_intervals)
+            js['msg'] = 'Turned color: {} OFF'.format(color)
+        js['result'] = 'Success'
+        return js
 
 ##-Helper functions-##
 
@@ -334,11 +520,13 @@ def init_rest_api():
 
     @rest_app.route("/status")
     def status():
-        js = {}
+        js = {
+            'result': 'Success'
+        }
         get_state = request.args.get('state', 't').lower()
         get_intervals = request.args.get('intervals', 't').lower()
         get_color = request.args.get('color','').lower()
-        
+
         if get_color:
             if get_color not in tclock.colors:
                 js['msg'] = "Unknown color:{}".format(get_color)
@@ -374,6 +562,7 @@ def init_rest_api():
     @rest_app.route("/interval")
     def intervals():
         js = tclock.get_interval_ids()
+        js['result'] = 'Success'
         resp = rest_app.response_class(
             response=json.dumps(js,indent=4,default=jsonizer),
             status=200,
@@ -383,7 +572,9 @@ def init_rest_api():
 
     @rest_app.route("/interval/<color>")
     def interval(color):
-        js = tclock.get_interval_ids(color)
+        js = {}
+        js['intervals'] = tclock.get_interval_ids(color)
+        js['result'] = 'Success'
         resp = rest_app.response_class(
             response=json.dumps(js,indent=4,default=jsonizer),
             status=200,
@@ -441,7 +632,7 @@ def init_rest_api():
         }
         status_code = 200
         changes = False
-        interval_settings = { 
+        interval_settings = {
             'color': color,
         }
         settings_opt_keys = ['from_time','to_time','brightness','brightness_changes']
@@ -550,13 +741,13 @@ def init_rest_api():
 
 def init_websocket_api():
     res_map = {
-        '/websocket': WebsocketApi,
+        '/+websocket': WebsocketApi,
     }
     if wsgi_app:
-        res_map['^(?!/websocket)'] = wsgi_app
+        res_map['^(?!/+websocket)'] = wsgi_app
     resource = Resource(res_map)
     cm = ChannelMgr()
-    cm.add_channel("status_change")
+    cm.add_channel("status_changes")
     return (resource,cm)
 
 ##-Main-##
@@ -612,7 +803,7 @@ if apps_resource or wsgi_app:
     wsgi.start()
 
 #Initialize our clock
-tclock = ToddlerClock()
+tclock = ToddlerClock(channelmsgr)
 
 #Load any intervals from the config file into our clock
 for c in config['intervals']:
