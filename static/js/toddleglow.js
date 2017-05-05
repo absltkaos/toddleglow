@@ -4,48 +4,63 @@ ui_event_state = {};
 
 //--Classes...err... Protypes? err... object constructors?--//
 //For interacting with the clock.
-function ToddlerClock(api_url,api_timeout,api_mode) {
+function ToddlerClock(opts) {
+    //api_url,api_timeout,api_mode,message_process_map,switch_callback
     //--Private Parts...--//
-    var getLocation = function (href) {
-        //Lifted from: http://stackoverflow.com/a/13405933
-        var location = document.createElement("a");
-        location.href = href;
-        if (location.host == "") {
-            location.href = location.href;
-        }
-        return location;
-    };
     var url = null;
     var wsh = null;
     var ws_chk_interval = null;
     var mode = "";
     var mode_forced = false;
+    var switching = false;
+    var deferred_switches = []; //This eliminates race conditions when _switch_mode is called multiple times quickly
+    var _api_url = "/";
+    var _api_timeout = 10000;
+    var _switch_callback = opts.switch_callback;
+    var _message_process_map = opts.message_process_map;
     var _ws_connected_chk = function () {
         if (!wsh.connected()) {
             console.log("Websocket failed to connect, Trying to failback to 'rest' mode");
             if (mode_forced) {
-                console.log("ERROR: mode specified to be 'websocket'");
+                console.log("ERROR: mode specified is forced to be 'websocket'");
             }
             else {
                 console.log("Using: 'rest' mode for ToddlerClock communications");
                 _switch_mode("rest");
-            }
+            }   
         }
     }
     var _switch_mode = function (apimode) {
         if (mode == apimode) {
             return;
         }
+        if (switching) {
+            deferred_switches.push(apimode);
+            return;
+        }
+        switching = true;
         console.log("Changing mode to: " + apimode);
         if (apimode == "websocket") {
-            status = ws_status;
-            poll = ws_poll;
-            intervals = ws_intervals;
-            new_interval = ws_new_interval;
-            update_interval = ws_update_interval;
-            delete_interval = ws_delete_interval;
-            light = ws_light;
-            mode = "websocket";
+            if(wsh.connected()) {
+                status = ws_status;
+                poll = ws_poll;
+                intervals = ws_intervals;
+                new_interval = ws_new_interval;
+                update_interval = ws_update_interval;
+                delete_interval = ws_delete_interval;
+                light = ws_light;
+                mode = "websocket";
+            }
+            else {
+                console.log("Failed changing mode to 'websocket', websocket is not connected");
+            }
+            if (_switch_callback) {
+                _switch_callback(mode);
+            }
+            switching = false;
+            if (deferred_switches.length > 0) {
+                _switch_mode(deferred_switches.shift());
+            }
         }
         else if (apimode == "rest") {
             if (mode) {
@@ -54,18 +69,44 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
                         if (wsh.connected()) {
                             wsh.close();
                             clearTimeout(ws_chk_timeout);
+                            ws_chk_timeout = null;
                         }
                     }
                 }
             }
-            status = rest_status;
-            poll = rest_poll;
-            intervals = rest_intervals;
-            new_interval = rest_new_interval;
-            update_interval = rest_update_interval;
-            delete_interval = rest_delete_interval;
-            light = rest_light;
-            mode = "rest";
+            rest_status(
+                {
+                    intervals: false,
+                    state: false,
+                },
+                function(data) {
+                    status = rest_status;
+                    poll = rest_poll;
+                    intervals = rest_intervals;
+                    new_interval = rest_new_interval;
+                    update_interval = rest_update_interval;
+                    delete_interval = rest_delete_interval;
+                    light = rest_light;
+                    mode = "rest";
+                    if (_switch_callback) {
+                        _switch_callback(mode);
+                    }
+                    switching = false;
+                    if (deferred_switches.length > 0) {
+                        _switch_mode(deferred_switches.shift());
+                    }
+                },
+                function(jqXhr, textStatus, errorMessage) {
+                    console.log("Failed changing mode to 'rest':" + errorMessage);
+                    if (_switch_callback) {
+                        _switch_callback(mode);
+                    }
+                    switching = false;
+                    if (deferred_switches.length > 0) {
+                        _switch_mode(deferred_switches.shift());
+                    }
+                }
+            );
         }
         else {
             console.log("Unknown mode: " + mode + " . Must be one of 'rest', or 'websocket'");
@@ -74,10 +115,21 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
     var _connect_websocket = function () {
         if ("WebsocketHelper" in window) {
             if (!mode_forced || mode == "websocket") {
-                wsh = new WebsocketHelper('ws://' + url.host + url.pathname + '/websocket',api_timeout);
+                if (wsh) {
+                    if (wsh.connected()) {
+                        wsh.close();
+                        clearTimeout(ws_chk_timeout);
+                        ws_chk_timeout = null;
+                    }
+                }
+                wsh = new WebsocketHelper('ws://' + url.host + url.pathname + '/websocket',_api_timeout);
                 wsh.onopen(function (evt) {
                     _switch_mode("websocket");
                     clearTimeout(ws_chk_timeout);
+                    ws_chk_timeout = null;
+                });
+                wsh.onmessage(function (evt) {
+                    _process_message(evt);
                 });
                 ws_chk_timeout = setTimeout(_ws_connected_chk,3000);
             }
@@ -86,6 +138,25 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
             if (!mode_forced || mode == "websocket") {
                 throw ("Websocket is not supported by your browser");
             }
+        }
+    }
+    var _getLocation = function (href) {
+        //Lifted from: http://stackoverflow.com/a/13405933
+        var location = document.createElement("a");
+        location.href = href;
+        if (location.host == "") {
+            location.href = location.href;
+        }
+        return location;
+    };
+    var _process_message = function(evt) {
+        var data = JSON.parse(evt.data);
+        if (_message_process_map[data.command]) {
+            _message_process_map[data.command](data.data);
+        }
+        else {
+            console.log("Recieved unknown command from server: " + data.command);
+            console.log(data);
         }
     }
     //Place holders for what our public functions will call
@@ -100,10 +171,10 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
     var rest_status = function (params,success_callback,fail_callback) {
         $.ajax({
             type: "GET",
-            url: api_url + "status",
+            url: _api_url + "status",
             dataType: 'json',
             data: params,
-            timeout: api_timeout,
+            timeout: _api_timeout,
             success: function (data,status,xhr) {
                 if (success_callback) {
                     success_callback(data,status,xhr);
@@ -119,9 +190,9 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
     var rest_poll = function (success_callback,fail_callback) {
         $.ajax({
             type: "GET",
-            url: api_url + "poll",
+            url: _api_url + "poll",
             dataType: 'json',
-            timeout: api_timeout,
+            timeout: _api_timeout,
             success: function (data,status,xhr) {
                 if (success_callback) {
                     success_callback(data,status,xhr);
@@ -141,9 +212,9 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
         }
         $.ajax({
             type: "GET",
-            url: api_url + uri,
+            url: _api_url + uri,
             dataType: 'json',
-            timeout: api_timeout,
+            timeout: _api_timeout,
             success: function (data,status,xhr) {
                 if (success_callback) {
                     success_callback(data,status,xhr);
@@ -159,10 +230,10 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
     var rest_new_interval = function (color,interval_details,success_callback,fail_callback) {
         $.ajax({
             type: "POST",
-            url:  api_url + 'interval/' + color,
+            url: _api_url + 'interval/' + color,
             contentType: 'application/json',
             dataType: 'json',
-            timeout: api_timeout,
+            timeout: _api_timeout,
             data: JSON.stringify(interval_details),
             success: function(data,status,xhr) {
                 if (success_callback) {
@@ -179,10 +250,10 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
     var rest_update_interval = function (color,interval_id,interval_details,success_callback,fail_callback) {
         $.ajax({
             type: "PUT",
-            url: api_url + 'interval/' + color + "/" + interval_id,
+            url: _api_url + 'interval/' + color + "/" + interval_id,
             dataType: 'json',
             contentType: 'application/json',
-            timeout: api_timeout,
+            timeout: _api_timeout,
             data: JSON.stringify(interval_details),
             success: function(data,status,xhr) {
                 if (success_callback) {
@@ -199,10 +270,10 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
     var rest_delete_interval = function (color,interval_id,success_callback,fail_callback) {
         $.ajax({
             type: "DELETE",
-            url: api_url + 'interval/' + color + "/" + interval_id,
+            url: _api_url + 'interval/' + color + "/" + interval_id,
             dataType: 'json',
             contentType: 'application/json',
-            timeout: api_timeout,
+            timeout: _api_timeout,
             success: function(data,status,xhr) {
                 if (success_callback) {
                     success_callback(data,status,xhr);
@@ -227,10 +298,10 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
         }
         $.ajax({
             type: "PUT",
-            url: api_url + 'light/' + color,
+            url: _api_url + 'light/' + color,
             dataType: 'json',
             contentType: 'application/json',
-            timeout: api_timeout,
+            timeout: _api_timeout,
             data: JSON.stringify(light_state),
             success: function(data,status,xhr) {
                 if (success_callback) {
@@ -439,20 +510,24 @@ function ToddlerClock(api_url,api_timeout,api_mode) {
         }
     }
     //--Logic to construct the object--//
-    if (api_mode) {
+    if (opts.api_url) {
+        this.api_url = opts.api_url;
+        _api_url = opts.api_url;
+    }
+    if (opts.api_timeout) {
+        this.api_timeout = opts.api_timeout;
+        _api_timeout = opts.api_timeout;
+    }
+    url = _getLocation(this.api_url);
+    if (opts.api_mode) {
         mode_forced = true;
-        _switch_mode(api_mode);
+        _switch_mode(opts.api_mode);
     }
     else {
+        //Start with "rest" mode, and upgrade to websocket if avail
         _switch_mode("rest");
     }
-    if (api_url) {
-        this.api_url = api_url;
-    }
-    if (api_timeout) {
-        this.api_timeout = api_timeout;
-    }
-    url = getLocation(this.api_url);
+    //Attempt upgrade to websocket
     _connect_websocket();
 }
 
@@ -464,6 +539,8 @@ function WebsocketHelper(api_url,callback_timeout) {
     var ws_api_url = 'ws://' + $(location).attr('host') + '/';
     var api_callback_timeout = 10000;
     var connected = false;
+    var connect_running = false;
+    var connect_running_cnt = 0;
     var socket = null;
     var checkIntervalId = null;
     var onmessage = function(evt) {return};
@@ -503,6 +580,16 @@ function WebsocketHelper(api_url,callback_timeout) {
         }
     }
     var _connect = function (init) {
+        if (connect_running) {
+            if (connect_running_cnt <= 3 ) {
+                connect_running_cnt += 1;
+                return;
+            }
+            else {
+                connect_running_cnt = 0;
+            }
+        }
+        connect_running = true;
         if (! navigator.onLine) {
             console.log("Websocket, can't connect... Please connect to the Internet and try again");
             return;
@@ -514,10 +601,16 @@ function WebsocketHelper(api_url,callback_timeout) {
             if (init) {
                 //Check our websocket is connected every 5 seconds.
                 checkIntervalId = setInterval(_check,5000);
+                connect_running = false;
             }
             onopen(evt);
         };
-        socket.onerror = onerror;
+        socket.onerror = function(evt) {
+            if (connect_running) {
+                connect_running = false;
+            }
+            onerror(evt);
+        };
         socket.onmessage = _process_message;
         socket.onclose = onclose;
     }
@@ -599,26 +692,64 @@ function WebsocketHelper(api_url,callback_timeout) {
 //-- For manipulating the UI --//
 //Create our main tclock object
 $(document).ready(function(){
-    tclock = new ToddlerClock("","","rest");
-    setInterval(refreshStatesUI,60000); //Check for status changes every 60mins
-});
-
-function initializeState() {
-    tclock.status("",
-        function (data) {
-            buildUI(data);
+    var restRefreshIntvl = null
+    var initialized = false
+    tclock = new ToddlerClock({
+        message_process_map: {
+            server_connected: function(data) {
+                if (!initialized) {
+                    initializeState(data)
+                    initialized = true;
+                }
+                else {
+                    updateLightStateUI(data.state);
+                    updateIntervalUI(data.intervals);
+                }
+            },
+            update_states: updateLightStateUI,
+            update_intervals: updateIntervalUI
         },
-        function (jqXhr, textStatus, errorMessage) {
-            var msg = "";
-            if (jqXhr.responseJSON) {
-                msg = jqXhr.responseJSON.msg;
+        switch_callback: function(mode) {
+            if (mode == "rest") {
+                if (!initialized) {
+                    initializeState();
+                    initialized = true;
+                }
+                restRefreshIntvl = setInterval(refreshStatesUI,60000); //Check for status changes every 60mins
+            }
+            else if (mode == "websocket") {
+                clearInterval(restRefreshIntvl);
+                restRefreshIntvl = null;
+                initialized = true;
             }
             else {
-                msg = jqXhr.responseText;
+                console.log("Unknown ToddlerClock mode: " + mode);
             }
-            bootbox.alert("ERROR getting status of clock: <hr />" + msg);
         }
-    );
+    });
+});
+
+function initializeState(d) {
+    if (d) {
+        buildUI(d)
+    }
+    else {
+        tclock.status("",
+            function (data) {
+                buildUI(data);
+            },
+            function (jqXhr, textStatus, errorMessage) {
+                var msg = "";
+                if (jqXhr.responseJSON) {
+                    msg = jqXhr.responseJSON.msg;
+                }
+                else {
+                    msg = jqXhr.responseText;
+                }
+                bootbox.alert("ERROR getting status of clock: <hr />" + msg);
+            }
+        );
+    }
 }
 
 function lightStateUIUpdated(color,triggered_from,success_callback,fail_callback) {
@@ -1208,15 +1339,19 @@ function updateLightStateUI(states,c) {
     }
 }
 
+function updateIntervalUI(intervals) {
+    for (color in intervals) {
+        var ilen = intervals[color].length;
+        $('#' + color + '_intervals').empty();
+    }
+    buildLightIntervalUI(intervals);
+}
+
 function refreshStatesUI() {
     tclock.status("",
         function(data) {
             updateLightStateUI(data.state);
-            for (color in data.intervals) {
-                var ilen = data.intervals[color].length;
-                $('#' + color + '_intervals').empty();
-            }
-            buildLightIntervalUI(data.intervals);
+            updateIntervalUI(data.intervals)
         },
         function (jqXhr, textStatus, errorMessage) {
             var msg = "";

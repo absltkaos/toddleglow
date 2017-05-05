@@ -7,6 +7,7 @@ import sys
 import os
 from flask import Flask, request, jsonify
 from geventwebsocket import WebSocketServer, WebSocketApplication, Resource
+from geventwebsocket.exceptions import WebSocketError
 
 DEFAULT_CONFIG_PATH = "./config.json"
 CONFIG_PATH = ""
@@ -64,7 +65,6 @@ class ToddlerClock:
     def poll(self):
         cur_datetime = arrow.utcnow().to('US/Mountain')
         cur_time = cur_datetime.strftime("%H:%M")
-        states_changed = {}
         #print("{}: Checking light timing status".format(cur_datetime))
         for color in self.state:
             if self.state[color]['override_intervals']:
@@ -87,16 +87,11 @@ class ToddlerClock:
                 if self.state[color]['brightness'] != brightness:
                     print("Setting color: {} on and to brightness level: {}".format(color,brightness))
                     self.turn_on(color,brightness)
-                    states_changed[color] = dict(self.state[color])
             else:
                 #No active intervals, so turn off color if 'on'
                 if self.state[color]['on']:
                     print("Turning color: {} off".format(color))
                     self.turn_off(color)
-                    states_changed[color] = dict(self.state[color])
-        if states_changed:
-            if self.channel_com:
-                self.channel_com.broadcast_to("status_changes",json.dumps(states_changed))
     def turn_on(self,color,brightness=255,override_intervals=None):
         try:
             self.state[color]['on'] = True
@@ -106,6 +101,16 @@ class ToddlerClock:
                 self.state[color]['override_intervals'] = True
             if override_intervals == False:
                 self.state[color]['override_intervals'] = False
+            if self.channel_com:
+                self.channel_com.broadcast_to(
+                    "status_changes",
+                    json.dumps({
+                        'command': 'update_states',
+                        'data': {
+                            color: dict(self.state[color])
+                        }
+                    })
+                )
         except KeyError:
             raise ValueError("ERROR: unknown color: {}".format(color))
     def turn_off(self,color,override_intervals=None):
@@ -118,6 +123,16 @@ class ToddlerClock:
                 self.state[color]['override_intervals'] = True
             if override_intervals == False:
                 self.state[color]['override_intervals'] = False
+            if self.channel_com:
+                self.channel_com.broadcast_to(
+                    "status_changes",
+                    json.dumps({
+                        'command': 'update_states',
+                        'data': {
+                            color: dict(self.state[color])
+                        }
+                    })
+                )
         except KeyError:
             raise ValueError("ERROR: unknown color: {}".format(color))
     def add_interval(self,color,from_time,to_time,brightness,brightness_changes=None,update_index=None):
@@ -147,6 +162,16 @@ class ToddlerClock:
             self.timing[color].insert(update_index,new_interval)
         else:
             self.timing[color].append(new_interval)
+        if self.channel_com:
+            self.channel_com.broadcast_to(
+                "status_changes",
+                json.dumps({
+                    'command': 'update_intervals',
+                    'data': {
+                        color: self.timing[color]
+                    }
+                },default=jsonizer)
+            )
         self.poll()
     def update_interval(self,color,interval_id,from_time=None,to_time=None,brightness=None,brightness_changes=None):
         updates = False
@@ -187,6 +212,16 @@ class ToddlerClock:
         try:
             del(self.timing[color][interval_id])
             self.turn_off(color)
+            if self.channel_com:
+                self.channel_com.broadcast_to(
+                    "status_changes",
+                    json.dumps({
+                        'command': 'update_intervals',
+                        'data': {
+                            color: self.timing[color]
+                        }
+                    },default=jsonizer)
+                )
         except IndexError:
             return
         except KeyError:
@@ -274,8 +309,10 @@ class Channel():
         for m in self.members:
             try:
                 m.ws.send(msg)
-            except:
-                raise
+            except WebSocketError:
+                self.unsubscribe(m);
+                pass
+                #raise
     def subscribe(self,member):
         self.members.append(member)
     def unsubscribe(self,member):
@@ -312,11 +349,16 @@ class WebsocketApi(WebSocketApplication):
         channelmsgr.subscribe("status_changes",self)
     def on_open(self):
         print("Connection opened")
-        self.ws.send(json.dumps({
-            'command': 'server_response',
-            'data': 'Connected'
-        }))
-        pass
+        try:
+            res = {
+                'command': 'server_connected'
+            }
+            res['data'] = self.status()
+            self.ws.send(json.dumps(res,default=jsonizer))
+        except WebSocketError:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            print("Error sending server_response 'Connected' msg:{}".format(exc_value))
+            self.ws.close_connection()
     def on_message(self, message):
         if message:
             print("Got Message: {}".format(message.__repr__()))
@@ -339,9 +381,14 @@ class WebsocketApi(WebSocketApplication):
                 }
             res['command'] = 'server_response'
             res['mid'] = m['mid']
-            self.ws.send(json.dumps(res,default=jsonizer))
+            try:
+                self.ws.send(json.dumps(res,default=jsonizer))
+            except WebSocketError:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                print("Error sending server_response 'Connected' msg:{}".format(exc_value))
+                self.ws.close_connection()
     def on_close(self, reason):
-        channelmsgr.unsubscribe("status_change",self)
+        channelmsgr.unsubscribe("status_changes",self)
         print("Connection Closed")
     def status(self,state=True,intervals=True,color=None,**kwargs):
         js = {
