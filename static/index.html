@@ -34,7 +34,20 @@
 </head>
 <body>
 
-
+<div id="api_mode" class="container">
+    <h4>API Mode:</h4>
+    <div class="container">
+    <strong>Rest</strong> <input id="api_mode_toggle" type="checkbox" data-toggle="toggle"> <strong>Websocket</strong>
+    </div>
+    <script>
+        $('#api_mode_toggle').bootstrapToggle({
+            on: 'Websocket',
+            off: 'Rest',
+            onstyle: "default",
+            offstyle: "default"
+        });
+    </script>
+</div>
 <div id="main_div" class="container">
     <h2>Toddler Glow Clock</h2>
     <div class="panel-group" id="config_accordion"></div>

@@ -1,6 +1,8 @@
 //Global vars
 tclock = null;
 ui_event_state = {};
+ui_initialized = false;
+ui_initializing = false;
 
 //--Classes...err... Protypes? err... object constructors?--//
 //For interacting with the clock.
@@ -22,7 +24,7 @@ function ToddlerClock(opts) {
         if (!wsh.connected()) {
             console.log("Websocket failed to connect, Trying to failback to 'rest' mode");
             if (mode_forced) {
-                console.log("ERROR: mode specified is forced to be 'websocket'");
+                console.error("ERROR: mode specified is forced to be 'websocket'");
             }
             else {
                 console.log("Using: 'rest' mode for ToddlerClock communications");
@@ -52,7 +54,7 @@ function ToddlerClock(opts) {
                 mode = "websocket";
             }
             else {
-                console.log("Failed changing mode to 'websocket', websocket is not connected");
+                console.warn("Failed changing mode to 'websocket', websocket is not connected");
             }
             if (_switch_callback) {
                 _switch_callback(mode);
@@ -97,7 +99,7 @@ function ToddlerClock(opts) {
                     }
                 },
                 function(jqXhr, textStatus, errorMessage) {
-                    console.log("Failed changing mode to 'rest':" + errorMessage);
+                    console.error("Failed changing mode to 'rest':" + errorMessage);
                     if (_switch_callback) {
                         _switch_callback(mode);
                     }
@@ -109,7 +111,7 @@ function ToddlerClock(opts) {
             );
         }
         else {
-            console.log("Unknown mode: " + mode + " . Must be one of 'rest', or 'websocket'");
+            console.warn("Unknown mode: " + mode + " . Must be one of 'rest', or 'websocket'");
         }
     };
     var _connect_websocket = function () {
@@ -155,8 +157,8 @@ function ToddlerClock(opts) {
             _message_process_map[data.command](data.data);
         }
         else {
-            console.log("Recieved unknown command from server: " + data.command);
-            console.log(data);
+            console.warn("Recieved unknown command from server: " + data.command);
+            console.warn(data);
         }
     }
     //Place holders for what our public functions will call
@@ -581,7 +583,7 @@ function WebsocketHelper(api_url,callback_timeout) {
     }
     var _connect = function (init) {
         if (connect_running) {
-            if (connect_running_cnt <= 3 ) {
+            if (connect_running_cnt <= 1 ) {
                 connect_running_cnt += 1;
                 return;
             }
@@ -602,12 +604,14 @@ function WebsocketHelper(api_url,callback_timeout) {
                 //Check our websocket is connected every 5 seconds.
                 checkIntervalId = setInterval(_check,5000);
                 connect_running = false;
+                connect_running_cnt = 0;
             }
             onopen(evt);
         };
         socket.onerror = function(evt) {
             if (connect_running) {
                 connect_running = false;
+                connect_running_cnt = 0;
             }
             onerror(evt);
         };
@@ -692,14 +696,17 @@ function WebsocketHelper(api_url,callback_timeout) {
 //-- For manipulating the UI --//
 //Create our main tclock object
 $(document).ready(function(){
-    var restRefreshIntvl = null
-    var initialized = false
+    var restRefreshIntvl = null;
     tclock = new ToddlerClock({
         message_process_map: {
             server_connected: function(data) {
-                if (!initialized) {
-                    initializeState(data)
-                    initialized = true;
+                if (!ui_initialized) {
+                    if (!ui_initializing) {
+                        ui_initializing = true;
+                        initializeState(data);
+                        ui_initialized = true;
+                        ui_initializing = false;
+                    }
                 }
                 else {
                     updateLightStateUI(data.state);
@@ -711,25 +718,51 @@ $(document).ready(function(){
         },
         switch_callback: function(mode) {
             if (mode == "rest") {
-                if (!initialized) {
-                    initializeState();
-                    initialized = true;
+                
+                ui_event_state['api_mode'] = false;
+                $("#api_mode_toggle").bootstrapToggle('off');
+                ui_event_state['api_mode'] = true;
+                if (!ui_initialized) {
+                    if (!ui_initializing) {
+                        ui_initializing = true;
+                        initializeState(
+                            "",
+                            function() {
+                                ui_initialized = true;
+                                ui_initializing = false;
+                            }
+                        );
+                    }
                 }
                 restRefreshIntvl = setInterval(refreshStatesUI,60000); //Check for status changes every 60mins
             }
             else if (mode == "websocket") {
+                ui_event_state['api_mode'] = false;
+                $("#api_mode_toggle").bootstrapToggle('on');
+                ui_event_state['api_mode'] = true;
                 clearInterval(restRefreshIntvl);
                 restRefreshIntvl = null;
-                initialized = true;
             }
             else {
                 console.log("Unknown ToddlerClock mode: " + mode);
             }
         }
     });
+    
+    //Event handler to api mode toggle
+    $('#api_mode_toggle').change(function(event) {
+        if (ui_event_state['api_mode']) {
+            if ($('#api_mode_toggle').is(":checked")) {
+                tclock.switch_mode("websocket")
+            }
+            else {
+                tclock.switch_mode("rest")
+            }
+        }
+    });
 });
 
-function initializeState(d) {
+function initializeState(d,callback) {
     if (d) {
         buildUI(d)
     }
@@ -737,6 +770,9 @@ function initializeState(d) {
         tclock.status("",
             function (data) {
                 buildUI(data);
+                if (callback) {
+                    callback(data);
+                }
             },
             function (jqXhr, textStatus, errorMessage) {
                 var msg = "";
@@ -949,8 +985,8 @@ function createInterval(color) {
                 color,
                 new_interval_details,
                 function (data) {
-                    var updated_ui_row = addIntervalRow(color,data.interval_id,data.interval_settings);
-                    $("#" + color + "_intervals_list").append(updated_ui_row.prop("outerHTML"));
+                    //var updated_ui_row = addIntervalRow(color,data.interval_id,data.interval_settings);
+                    //$("#" + color + "_intervals_list").append(updated_ui_row.prop("outerHTML"));
                     tclock.status(
                         {'color': color, 'intervals': false},
                         function (data) {
@@ -1019,8 +1055,8 @@ function editInterval(color,interval_id) {
                 interval_id,
                 new_interval_details,
                 function (data) {
-                    var updated_ui_row = addIntervalRow(color,interval_id,data['new_interval_settings']);
-                    $("#" + color + "_interval_config_id_" + interval_id).replaceWith(updated_ui_row.prop("outerHTML"));
+                    //var updated_ui_row = addIntervalRow(color,interval_id,data['new_interval_settings']);
+                    //$("#" + color + "_interval_config_id_" + interval_id).replaceWith(updated_ui_row.prop("outerHTML"));
                     tclock.status(
                         {'color': color, 'intervals': false},
                         function (data) {
@@ -1317,8 +1353,9 @@ function updateLightStateElems(state,color) {
         $('#' + color + '_light_toggle').bootstrapToggle('disable');
         ui_event_state[color]['light_toggle']['change'] = true;
     }
-    if (ui_state != state.override_intervals) {
+    if (ui_override != state.override_intervals) {
         $('#' + color + '_state_override').prop('checked',state.override_intervals)
+        ui_override = state.override_intervals;
     }
     if (ui_brightness != state.brightness) {
         ui_event_state[color]['brightness_slider']['slidechange'] = false;
@@ -1326,6 +1363,15 @@ function updateLightStateElems(state,color) {
         $("#" + color + "_state_override_brightness").val(state.brightness);
         ui_event_state[color]['brightness_slider']['slidechange'] = true;
     }
+    //Set the light on/off toggle correctly enabled/disabled based on override_intervals value
+    ui_event_state[color]['light_toggle']['change'] = false;
+    if (state.override_intervals) {
+        $('#' + color + '_light_toggle').bootstrapToggle('enable');
+    }
+    else {
+        $('#' + color + '_light_toggle').bootstrapToggle('disable');
+    }
+    ui_event_state[color]['light_toggle']['change'] = true;
 }
 
 function updateLightStateUI(states,c) {

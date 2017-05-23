@@ -5,6 +5,7 @@ import gevent.wsgi
 import json
 import sys
 import os
+import logging
 from flask import Flask, request, jsonify
 from geventwebsocket import WebSocketServer, WebSocketApplication, Resource
 from geventwebsocket.exceptions import WebSocketError
@@ -15,10 +16,21 @@ REAL_CONFIG_PATH = DEFAULT_CONFIG_PATH
 default_opts = {
     'api_listen': '0.0.0.0',
     'api_port': 8080,
-    'api_debug_mode': False,
     'intervals': {},
     'api_rest': True,
-    'api_websocket': True
+    'api_rest_debug': False,
+    'api_websocket': True,
+    'time_zone': 'US/Mountain',
+    'log_level': 'info'
+}
+log_level = logging.INFO
+logging_levels = {
+    'debug': logging.DEBUG,
+    'info': logging.INFO,
+    'warning': logging.WARNING,
+    'error': logging.ERROR,
+    'critical': logging.CRITICAL,
+    'notset': logging.NOTSET
 }
 server_func = gevent.wsgi.WSGIServer
 config_file = None # This holds our config file object
@@ -31,7 +43,8 @@ channelmsgr = None
 
 ##-Classes-##
 class ToddlerClock:
-    def __init__(self,channel_com=None):
+    def __init__(self,time_zone,channel_com=None,logger=None):
+        self.logger = logger or logging.getLogger("ToddlerClock")
         self.colors = ['blue', 'yellow', 'green', 'orange', 'white', 'red']
         self.timing = {}
         self.state = {}
@@ -43,6 +56,7 @@ class ToddlerClock:
             }
             self.timing[c] = []
         self.channel_com = channel_com
+        self.tz = time_zone
         piglow.auto_update = True
         piglow.clear();
     def _active_interval(self,color):
@@ -63,9 +77,9 @@ class ToddlerClock:
             keys.append(elt)
         return keys
     def poll(self):
-        cur_datetime = arrow.utcnow().to('US/Mountain')
+        cur_datetime = arrow.utcnow().to(self.tz)
         cur_time = cur_datetime.strftime("%H:%M")
-        #print("{}: Checking light timing status".format(cur_datetime))
+        #self.logger.debug("{}: Checking light timing status".format(cur_datetime))
         for color in self.state:
             if self.state[color]['override_intervals']:
                 continue
@@ -85,23 +99,23 @@ class ToddlerClock:
                             brightness = i['brightness_change_at'][bt]
                             break
                 if self.state[color]['brightness'] != brightness:
-                    print("Setting color: {} on and to brightness level: {}".format(color,brightness))
+                    self.logger.info("Setting color: {} on and to brightness level: {}".format(color,brightness))
                     self.turn_on(color,brightness)
             else:
                 #No active intervals, so turn off color if 'on'
                 if self.state[color]['on']:
-                    print("Turning color: {} off".format(color))
+                    self.logger.info("Turning color: {} off".format(color))
                     self.turn_off(color)
     def turn_on(self,color,brightness=255,override_intervals=None):
         try:
             self.state[color]['on'] = True
             self.state[color]['brightness'] = brightness
             piglow.colour(color,int(brightness))
-            if override_intervals == True:
-                self.state[color]['override_intervals'] = True
-            if override_intervals == False:
-                self.state[color]['override_intervals'] = False
+            if override_intervals != None:
+                if self.state[color]['override_intervals'] != override_intervals:
+                    self.state[color]['override_intervals'] = override_intervals
             if self.channel_com:
+                self.logger.info("ToddlerClock.turn_on() called, broadcasting possibly state changes to color: '{}'".format(color))
                 self.channel_com.broadcast_to(
                     "status_changes",
                     json.dumps({
@@ -119,11 +133,11 @@ class ToddlerClock:
                 piglow.colour(color,0)
                 self.state[color]['on'] = False
                 self.state[color]['brightness'] = 0
-            if override_intervals == True:
-                self.state[color]['override_intervals'] = True
-            if override_intervals == False:
-                self.state[color]['override_intervals'] = False
+            if override_intervals != None:
+                if self.state[color]['override_intervals'] != override_intervals:
+                    self.state[color]['override_intervals'] = override_intervals
             if self.channel_com:
+                self.logger.info("ToddlerClock.turn_off() called, broadcasting possibly state changes to color: '{}'".format(color))
                 self.channel_com.broadcast_to(
                     "status_changes",
                     json.dumps({
@@ -299,7 +313,8 @@ class TimeInterval:
             return False
 
 class Channel():
-    def __init__(self,name,members=None):
+    def __init__(self,name,members=None,logger=None):
+        self.logger = logger or logging.getLogger("Channel:{}".format(name))
         self.name = name
         if members:
             self.members = members
@@ -307,6 +322,7 @@ class Channel():
             self.members = []
     def broadcast(self,msg):
         for m in self.members:
+            self.logger.debug("Sending msg to member: {}, msg: {}".format(m.conn_info, msg))
             try:
                 m.ws.send(msg)
             except WebSocketError:
@@ -315,28 +331,41 @@ class Channel():
                 #raise
     def subscribe(self,member):
         self.members.append(member)
+        self.logger.debug("Member: {} subscribed".format(member.conn_info))
     def unsubscribe(self,member):
         self.members.remove(member)
+        self.logger.debug("Member: {} Un-subscribed".format(member.conn_info))
 
 class ChannelMgr():
-    def __init__(self):
+    def __init__(self,logger=None):
+        self.logger = logger or logging.getLogger("ChannelMgr")
         self.channels = {}
     def add_channel(self,name,members=None):
+        self.logger.debug("Created new channel: {}".format(name))
         self.channels[name] = Channel(name,members)
     def broadcast(self,msg):
+        self.logger.debug("Broadcasting to all channels, message: {}".format(msg))
         for c in self.channels:
             self.channels[c].broadcast(msg)
     def broadcast_to(self,channel,msg):
+        self.logger.debug("Broadcasting to channel: {}, message: {}".format(channel,msg))
         self.channels[channel].broadcast(msg)
     def subscribe(self,channel,member):
+        self.logger.debug("Subscribing Member: {} to channel: {}".format(member.conn_info,channel))
         self.channels[channel].subscribe(member)
     def unsubscribe(self,channel,member):
+        self.logger.debug("UN-Subscribing Member: {} from channel: {}".format(member.conn_info,channel))
         self.channels[channel].unsubscribe(member)
 
 class WebsocketApi(WebSocketApplication):
-    def __init__(self, ws):
+    def __init__(self, ws, logger=None):
+        self.logger = logger or logging.getLogger("WebSocketAPI")
         self.protocol = self.protocol_class(self)
         self.ws = ws
+        self.conn_info = "{}:{}".format(
+            self.ws.environ.get('HTTP_X_REAL_IP',self.ws.environ['REMOTE_ADDR']),
+            self.ws.environ['REMOTE_PORT']
+        )
         self.cmds = {
             'status': self.status,
             'poll': self.poll,
@@ -346,51 +375,86 @@ class WebsocketApi(WebSocketApplication):
             'delete_interval': self.delete_interval,
             'change_light': self.change_light,
         }
+        self.logger = LogContextAdapter(self.logger,{'context_data': self.conn_info})
         channelmsgr.subscribe("status_changes",self)
     def on_open(self):
-        print("Connection opened")
+        self.logger.info("Connection opened")
         try:
+            self.logger.debug("Gathering initial states for new connection")
             res = {
                 'command': 'server_connected'
             }
             res['data'] = self.status()
+            self.logger.debug("Sending initial states to new websocket connection: {}".format(res))
             self.ws.send(json.dumps(res,default=jsonizer))
         except WebSocketError:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            print("Error sending server_response 'Connected' msg:{}".format(exc_value))
+            self.logger.error("Error sending server_response 'Connected' msg:{}".format(exc_value),exc_info=True)
             self.ws.close_connection()
     def on_message(self, message):
         if message:
-            print("Got Message: {}".format(message.__repr__()))
+            processing_error = False
+            self.logger.debug("Got Message (string repr): {}".format(message.__repr__()))
+            mid = None
             m = json.loads(message)
-            md = json.loads(m['data'])
-            cmd = md['command']
-            #print("Sending these args to: {}\n{}".format(cmd,json.dumps(md,indent=4)));
+            req = {}
             try:
-                res = self.cmds[cmd](**md)
+                mid = m['mid']
             except KeyError:
+                pass
+            try:
+                md = json.loads(m['data'])
+                try:
+                    cmd = md['command']
+                except KeyError:
+                    self.logger.error("Missing 'command' key in message data, data message was: {}".format(md))
+                    res = {
+                        'command': 'server_response',
+                        'msg': 'Failed: Missing required attribute "command" in "data" object: "{}"'.format(md),
+                        'result': 'Failed'
+                    }
+                    processing_error = True
+            except KeyError:
+                self.logger.error("Missing 'data' key in JSON message, raw message was: {}".format(message.__repr__()))
                 res = {
-                    "msg": "Failed: Unknown command: {}".format(cmd),
-                    "result": "Failed"
-                }
-            except:
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                res = {
-                    'msg': 'Failed: {}'.format(exc_value),
+                    'command': 'server_response',
+                    'msg': 'Failed: Missing required JSON attribute: "data" for processing your message: "{}"'.format(message.__repr__()),
                     'result': 'Failed'
                 }
-            res['command'] = 'server_response'
-            res['mid'] = m['mid']
+                processing_error = True
+            if not processing_error:
+                self.logger.info("Recieved command: '{}', and data: {}".format(cmd,md))
+                try:
+                    res = self.cmds[cmd](**md)
+                except KeyError:
+                    res = {
+                        "msg": "Failed: Unknown command: {}".format(cmd),
+                        "result": "Failed"
+                    }
+                except:
+                    exc_type, exc_value, exc_traceback = sys.exc_info()
+                    res = {
+                        'msg': 'Failed: {}'.format(exc_value),
+                        'result': 'Failed'
+                    }
+                try:
+                    t = res['command']
+                except KeyError:
+                    res['command'] = 'server_response'
+            if mid:
+                res['mid'] = mid
             try:
+                self.logger.debug("Sending back response: {}".format(res))
                 self.ws.send(json.dumps(res,default=jsonizer))
             except WebSocketError:
                 exc_type, exc_value, exc_traceback = sys.exc_info()
-                print("Error sending server_response 'Connected' msg:{}".format(exc_value))
+                self.logger.error("Error sending server_response 'Connected' msg:{}".format(exc_value),exc_info=True)
                 self.ws.close_connection()
     def on_close(self, reason):
         channelmsgr.unsubscribe("status_changes",self)
-        print("Connection Closed")
+        self.logger.info("Connection Closed")
     def status(self,state=True,intervals=True,color=None,**kwargs):
+        self.logger.debug("Gathering light states")
         js = {
             'msg': 'Completed',
             'result': 'Success'
@@ -409,21 +473,27 @@ class WebsocketApi(WebSocketApplication):
                 js['intervals'] = tclock.timing[color]
             else:
                 js['intervals'] = tclock.timing
+        self.logger.debug("States gathered, responding with: {}".format(js))
         return js
     def poll(self,**kwargs):
+        self.logger.debug("Executing Poll")
         tclock.poll();
         js = {
             'msg': 'Completed',
             'result': 'Success'
         }
+        self.logger.debug("Poll completed, responding with: {}".format(js))
         return js
     def get_intervals(self,color=None,**kwargs):
+        self.logger.debug("Gathering color change intervals")
         js = {}
         js['intervals'] = tclock.get_interval_ids(color)
         js['result'] = 'Success'
         js['msg'] = 'Completed'
+        self.logger.debug("Color change intervals gathered, responding with: {}".format(js))
         return js
     def new_interval(self,color,interval_details,**kwargs):
+        self.logger.debug("Preparing to create a new interval for color: {}, details: {}".format(color,interval_details))
         js = {
             'msg': '',
             'result': ''
@@ -444,6 +514,7 @@ class WebsocketApi(WebSocketApplication):
             except KeyError:
                 pass
         try:
+            self.logger.debug("Attempting to create a new interval with settings: {}".format(interval_settings))
             tclock.add_interval(**interval_settings)
             js['msg'] = "Created new interval"
             js['result'] = "Success"
@@ -453,10 +524,13 @@ class WebsocketApi(WebSocketApplication):
             update_config()
         except:
             exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.logger.error("Error trying to create a new interval: {}".format(exc_value),exc_info=True)
             js['msg'] = 'Failed: {}'.format(exc_value)
             js['result'] = 'Failed'
+        self.logger.debug("New interval processing done, responding with: {}".format(js))
         return js
     def update_interval(self,color,interval_id,interval_details,**kwargs):
+        self.logger.debug("Preparing to update interval_id: {} for color: {} details: {}".format(interval_id,color,interval_details))
         js = {
             'msg': '',
             'result': ''
@@ -480,6 +554,7 @@ class WebsocketApi(WebSocketApplication):
             except KeyError:
                 pass
         try:
+            self.logger.debug("Attempting to update interval_id: {} for color: {} with details: {}".format(interval_id,color,interval_settings))
             tclock.update_interval(**interval_settings)
             js['msg'] = "Updated interval: {}:{}".format(color,interval_id)
             js['result'] = "Success"
@@ -488,10 +563,13 @@ class WebsocketApi(WebSocketApplication):
             update_config()
         except:
             exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.logger.error("Error trying to update interval_id: {} for color: {}: {}".format(interval_id,color,exc_value),exc_info=True)
             js['msg'] = 'Failed: {}'.format(exc_value)
             js['result'] = 'Failed'
+        self.logger.debug("Update interval processing done, responding with: {}".format(js))
         return js
     def delete_interval(self,color,interval_id,**kwargs):
+        self.logger.debug("Preparing to delete interval_id: {} for color: {}".format(interval_id,color))
         js = {
             'msg': '',
             'result': ''
@@ -503,16 +581,20 @@ class WebsocketApi(WebSocketApplication):
             js['result'] = 'Failed'
             return js
         try:
+            self.logger.debug("Attempting to delete interval_id: {} for color: {}".format(interval_id,color))
             tclock.del_interval(color,i_id)
             js['msg'] = 'Deleted interval'
             js['result'] = 'Success'
             update_config()
         except:
             exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.logger.error("Error trying to delete interval_id: {} for color: {}: {}".format(interval_id,color,exc_value),exc_info=True)
             js['msg'] = 'Failed: {}'.format(exc_value)
             js['result'] = 'Failed'
+        self.logger.debug("Delete interval processing done, responding with: {}".format(js))
         return js
     def change_light(self,color,state,brightness=None,override_intervals=False,**kwargs):
+        self.logger.debug("Preparing to change light state for color: {} state: {} brightness: {}, override_intervals: {}".format(color,state,brightness,override_intervals))
         js = {
             'msg': '',
             'result': ''
@@ -532,13 +614,20 @@ class WebsocketApi(WebSocketApplication):
                 brightness = int(brightness)
             else:
                 brightness = 255
+            self.logger.debug("Attempting to change light state for color 'on': {}".format(color))
             tclock.turn_on(color,brightness,override_intervals)
             js['msg'] = 'Turned color: {} ON'.format(color)
         if state == 'off':
+            self.logger.debug("Attempting to change light state for color 'off': {}".format(color))
             tclock.turn_off(color,override_intervals)
             js['msg'] = 'Turned color: {} OFF'.format(color)
         js['result'] = 'Success'
+        self.logger.debug("Change light state processing done, responding with: {}".format(js))
         return js
+
+class LogContextAdapter(logging.LoggerAdapter):
+    def process(self, msg, kwargs):
+        return '[%s] %s' % (self.extra['context_data'], msg), kwargs
 
 ##-Helper functions-##
 
@@ -556,24 +645,53 @@ def update_config():
     config_file.flush()
 
 def init_rest_api():
+    class RestLoggerPrepender:
+        def __init__(self,logger):
+            self.logger = logger
+            self.warn = self.warning
+            self.fatal = self.critical
+        def _ctx(self):
+            return "{}:{}".format(
+                request.environ.get('HTTP_X_REAL_IP',request.environ['REMOTE_ADDR']),
+                request.environ['REMOTE_PORT']
+            )
+        def _edit_msg(self,msg):
+            return "[{}] {}".format(self._ctx(),msg)
+        def critical(self, msg, *args, **kwargs):
+            self.logger.critical(self._edit_msg(msg),*args, **kwargs)
+        def debug(self, msg, *args, **kwargs):
+            self.logger.debug(self._edit_msg(msg),*args, **kwargs)
+        def error(self, msg, *args, **kwargs):
+            self.logger.error(self._edit_msg(msg),*args, **kwargs)
+        def exception(self, msg, *args, **kwargs):
+            self.logger.exception(self._edit_msg(msg),*args, **kwargs)
+        def info(self, msg, *args, **kwargs):
+            self.logger.info(self._edit_msg(msg),*args, **kwargs)
+        def warning(self, msg, *args, **kwargs):
+            self.logger.warning(self._edit_msg(msg),*args, **kwargs)
+        def log(self, level, msg, *args, **kwargs):
+            self.logger.log(level,self._edit_msg(msg),*args, **kwargs)
     #Initialize Flask based API
-    rest_app=Flask(__name__)
+    rest_app=Flask("RestAPI",static_folder="{}/static".format(os.getcwd()))
     #Set Flask debug if needed
-    if config['api_debug_mode']:
+    if config['api_rest_debug']:
         rest_app.debug = True
+    #Our special log wrapper to prepending context info
+    rest_app.log = RestLoggerPrepender(rest_app.logger)
     @rest_app.route("/")
     def root():
         return rest_app.send_static_file('index.html')
 
     @rest_app.route("/status")
     def status():
+        rest_app.log.debug("Gathering light states")
         js = {
             'result': 'Success'
         }
         get_state = request.args.get('state', 't').lower()
         get_intervals = request.args.get('intervals', 't').lower()
         get_color = request.args.get('color','').lower()
-
+        rest_app.log.info("Recieved command: 'status', and data: {{color: {}, state: {}, intervals: {}}}".format(get_color,get_state,get_intervals))
         if get_color:
             if get_color not in tclock.colors:
                 js['msg'] = "Unknown color:{}".format(get_color)
@@ -590,6 +708,7 @@ def init_rest_api():
                 js['intervals'] = tclock.timing[get_color]
             else:
                 js['intervals'] = tclock.timing
+        rest_app.log.debug("States gathered, responding with: {}".format(js))
         resp = rest_app.response_class(
             response=json.dumps(js,indent=4,default=jsonizer),
             status=200,
@@ -599,17 +718,21 @@ def init_rest_api():
 
     @rest_app.route("/poll")
     def force_poll():
+        rest_app.log.debug("Executing Poll")
         tclock.poll();
         js = {
             'msg': 'Completed',
             'result': 'Success'
         }
+        rest_app.log.debug("Poll completed, responding with: {}".format(js))
         return jsonify(js)
 
     @rest_app.route("/interval")
     def intervals():
+        rest_app.log.debug("Gathering color change intervals")
         js = tclock.get_interval_ids()
         js['result'] = 'Success'
+        rest_app.log.debug("Color change intervals gathered, responding with: {}".format(js))
         resp = rest_app.response_class(
             response=json.dumps(js,indent=4,default=jsonizer),
             status=200,
@@ -619,9 +742,11 @@ def init_rest_api():
 
     @rest_app.route("/interval/<color>")
     def interval(color):
+        rest_app.log.debug("Gathering color change intervals for color: {}".format(color))
         js = {}
         js['intervals'] = tclock.get_interval_ids(color)
         js['result'] = 'Success'
+        rest_app.log.debug("Color change intervals gathered for color: {}, responding with: {}".format(color,js))
         resp = rest_app.response_class(
             response=json.dumps(js,indent=4,default=jsonizer),
             status=200,
@@ -640,10 +765,12 @@ def init_rest_api():
         settings_reqd_keys = ['from_time','to_time','brightness']
         settings_opt_keys = ['brightness_changes']
         req_json = request.get_json()
+        rest_app.log.debug("Preparing to create a new interval for color: {}, details: {}".format(color,req_json))
         for rk in settings_reqd_keys:
             try:
                 interval_settings[rk] = req_json[rk]
             except KeyError:
+                rest_app.log.warning("Request for new interval is missing a required key: {}".format(rk))
                 js['msg'] = 'Missing required key "{}"'.format(rk)
                 js['result'] = "Failed"
                 resp = jsonify(js)
@@ -655,6 +782,7 @@ def init_rest_api():
             except KeyError:
                 pass
         try:
+            rest_app.log.debug("Attempting to create a new interval with settings: {}".format(interval_settings))
             tclock.add_interval(**interval_settings)
             js['msg'] = "Created new interval"
             js['result'] = "Success"
@@ -666,7 +794,9 @@ def init_rest_api():
             exc_type, exc_value, exc_traceback = sys.exc_info()
             js['msg'] = 'Failed: {}'.format(exc_value)
             js['result'] = 'Failed'
+            rest_app.log.error("Error trying to create a new interval: {}".format(exc_value),exc_info=True)
             status_code = 400
+        rest_app.log.debug("New interval processing done, responding with: {}".format(js))
         resp = jsonify(js)
         resp.status_code = status_code
         return resp
@@ -684,10 +814,12 @@ def init_rest_api():
         }
         settings_opt_keys = ['from_time','to_time','brightness','brightness_changes']
         req_json = request.get_json()
+        rest_app.log.debug("Preparing to update interval_id: {} for color: {} details: {}".format(interval_id,color,req_json))
         try:
             i_id = int(interval_id)
             interval_settings['interval_id'] = int(interval_id)
         except:
+            rest_app.log.warning("Interval ID MUST be an integer: {}".format(interval_id))
             js['msg'] = 'Interval id must be an integer'
             js['result'] = 'Failed'
             resp = jsonify(js)
@@ -700,6 +832,7 @@ def init_rest_api():
             except KeyError:
                 pass
         try:
+            rest_app.log.debug("Attempting to update interval_id: {} for color: {} with details: {}".format(interval_id,color,interval_settings))
             tclock.update_interval(**interval_settings)
             js['msg'] = "Updated interval: {}:{}".format(color,interval_id)
             js['result'] = "Success"
@@ -710,7 +843,9 @@ def init_rest_api():
             exc_type, exc_value, exc_traceback = sys.exc_info()
             js['msg'] = 'Failed: {}'.format(exc_value)
             js['result'] = 'Failed'
+            rest_app.log.error("Error trying to update interval_id: {} for color: {}: {}".format(interval_id,color,exc_value),exc_info=True)
             status_code = 400
+        rest_app.log.debug("Update interval processing done, responding with: {}".format(js))
         resp = jsonify(js)
         resp.status_code = status_code
         return resp
@@ -722,6 +857,7 @@ def init_rest_api():
             'result': ''
         }
         status_code = 200
+        rest_app.log.debug("Preparing to delete interval_id: {} for color: {}".format(interval_id,color))
         try:
             i_id = int(interval_id)
         except:
@@ -731,6 +867,7 @@ def init_rest_api():
             resp.status_code = 400
             return resp
         try:
+            rest_app.log.debug("Attempting to delete interval_id: {} for color: {}".format(interval_id,color))
             tclock.del_interval(color,i_id)
             js['msg'] = 'Deleted interval'
             js['result'] = 'Success'
@@ -739,7 +876,9 @@ def init_rest_api():
             exc_type, exc_value, exc_traceback = sys.exc_info()
             js['msg'] = 'Failed: {}'.format(exc_value)
             js['result'] = 'Failed'
+            rest_app.log.error("Error trying to delete interval_id: {} for color: {}: {}".format(interval_id,color,exc_value),exc_info=True)
             status_code = 400
+        rest_app.log.debug("Delete interval processing done, responding with: {}".format(js))
         resp = jsonify(js)
         resp.status_code = status_code
         return resp
@@ -752,15 +891,18 @@ def init_rest_api():
         }
         req_json = request.get_json()
         override_intervals = False
+        rest_app.log.debug("Preparing to change light state for color: {} details: {}".format(color,req_json))
         try:
             state = req_json['state'].lower()
         except KeyError:
+            rest_app.log.warning("Missing state 'key'")
             js['msg'] = 'Missing "state" key'
             js['result'] = "Failed"
             resp = jsonify(js)
             resp.status_code = 400
             return resp
         if state not in ['on','off']:
+            rest_app.log.warning("State must be either 'on' or 'off': {}".format(state))
             js['msg'] = 'Invalid state: {}, must be one of :"on" or "off"'.format(state)
             js['result'] = 'Failed'
             resp = jsonify(js)
@@ -776,12 +918,15 @@ def init_rest_api():
             except KeyError:
                 brightness = 255
                 pass
+            rest_app.log.debug("Attempting to change light state for color 'on': {}".format(color))
             tclock.turn_on(color,brightness,override_intervals)
             js['msg'] = 'Turned color: {} ON'.format(color)
         if state == 'off':
+            rest_app.log.debug("Attempting to change light state for color 'off': {}".format(color))
             tclock.turn_off(color,override_intervals)
             js['msg'] = 'Turned color: {} OFF'.format(color)
         js['result'] = 'Success'
+        rest_app.log.debug("Change light state processing done, responding with: {}".format(js))
         resp = jsonify(js)
         return resp
     return rest_app
@@ -821,19 +966,46 @@ try:
     config_file = open(REAL_CONFIG_PATH,'r+')
     if not new_config:
         config = json.load(config_file)
+        for k in default_opts:
+            try:
+                t = config[k]
+                del(t)
+            except KeyError:
+                config[k] = default_opts[k]
     else:
         config = dict(default_opts)
 except:
     print("Error reading in config file at: {}".format(REAL_CONFIG_PATH))
     raise
 
-#Start APIs
-if config['api_rest']:
-    wsgi_app=init_rest_api()
-    app=wsgi_app
-if config['api_websocket']:
-    apps_resource = init_websocket_api()
+#Initialize logger
+try:
+    log_level = int(config['log_level'])
+except ValueError:
+    try:
+        log_level = logging_levels[config['log_level'].lower()]
+    except:
+        raise
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("Main")
 
+#Start APIs
+logger.info("Initializing APIs")
+if config['api_rest']:
+    logger.debug("Initializing REST API")
+    wsgi_app=init_rest_api()
+    logger.debug("REST API Initialized")
+    app=wsgi_app
+    print("static_folder: {}".format(app.static_folder))
+if config['api_websocket']:
+    logger.debug("Initializing WebSocket API")
+    apps_resource = init_websocket_api()
+    logger.debug("WebSocket API Initialized")
+
+logger.info("Starting APIs")
 if apps_resource or wsgi_app:
     if wsgi_app:
         app = wsgi_app
@@ -842,6 +1014,12 @@ if apps_resource or wsgi_app:
         channelmsgr = apps_resource[1]
         server_func = WebSocketServer
     #Create a WSGI server
+    logger.debug("Starting WSGI Server using: {}, listening on: {}:{}".format(
+            server_func.__name__,
+            config['api_listen'],
+            config['api_port']
+        )
+    )
     wsgi = server_func(
         listener=(config['api_listen'], config['api_port']),
         application=app
@@ -850,11 +1028,14 @@ if apps_resource or wsgi_app:
     wsgi.start()
 
 #Initialize our clock
-tclock = ToddlerClock(channelmsgr)
+logger.info("Initializing ToddlerClock with timezone: {}".format(config['time_zone']))
+tclock = ToddlerClock(config['time_zone'],channelmsgr)
 
 #Load any intervals from the config file into our clock
+logger.info("Importing any configured intervals into the ToddlerClock")
 for c in config['intervals']:
     for i in config['intervals'][c]:
+        logger.debug("Found Interval for color: {} for: {}".format(c,i['time_interval']))
         from_time, to_time = i['time_interval'].replace(' => ',',').split(',')
         tclock.add_interval(c,from_time,to_time,i['brightness'],i['brightness_change_at'])
 
@@ -862,12 +1043,13 @@ for c in config['intervals']:
 update_config()
 
 #Event Loop
-print("Running...")
+logger.info("Finished startup, Running...")
 while running:
+    #logger.debug("Polling ToddlerClock for needed state changes")
     tclock.poll()
     gevent.wait(timeout=10)
 
 #Close down gevent servers
-print("Shutting down...")
+logger.info("Shutting down..")
 wsgi.close()
 wsgi.stop(timeout=1)
