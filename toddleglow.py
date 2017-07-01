@@ -651,8 +651,16 @@ def init_rest_api():
             self.warn = self.warning
             self.fatal = self.critical
         def _ctx(self):
+            ips = (
+                request.environ.get('HTTP_X_FORWARDED_FOR',False),
+                request.environ.get('HTTP_X_REAL_IP',False),
+                request.environ['REMOTE_ADDR'],
+            )
+            for ip in ips:
+                if ip:
+                    break
             return "{}:{}".format(
-                request.environ.get('HTTP_X_REAL_IP',request.environ['REMOTE_ADDR']),
+                ip,
                 request.environ['REMOTE_PORT']
             )
         def _edit_msg(self,msg):

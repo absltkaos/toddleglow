@@ -1,0 +1,9 @@
+[Unit]
+Description=ToddleGlow
+
+[Service]
+User=pi
+ExecStart=/home/pi/toddleglow/toddleglow.py
+
+[Install]
+WantedBy=multi-user.target
