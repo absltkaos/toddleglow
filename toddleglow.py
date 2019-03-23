@@ -1,30 +1,38 @@
 #!/usr/bin/python
-import piglow
+
 import arrow
 import gevent.wsgi
 import json
 import sys
 import os
 import logging
+from collections import OrderedDict
 from flask import Flask, request, jsonify
 from geventwebsocket import WebSocketServer, WebSocketApplication, Resource
 from geventwebsocket.exceptions import WebSocketError
 
+try:
+    import piglow
+    PIGLOW_ENABLED = True
+except ImportError:
+    PIGLOW_ENABLED = False
+
 DEFAULT_CONFIG_PATH = "./config.json"
 CONFIG_PATH = ""
 REAL_CONFIG_PATH = DEFAULT_CONFIG_PATH
-default_opts = {
+DEFAULT_OPTS = {
     'api_listen': '0.0.0.0',
     'api_port': 8080,
-    'intervals': {},
     'api_rest': True,
     'api_rest_debug': False,
     'api_websocket': True,
-    'time_zone': 'US/Mountain',
-    'log_level': 'info'
+    'intervals': {},
+    'log_level': 'info',
+    'piglow_enabled': PIGLOW_ENABLED,
+    'time_zone': 'US/Mountain'
 }
-log_level = logging.INFO
-logging_levels = {
+LOG_LEVEL = logging.INFO
+LOGGING_LEVELS = {
     'debug': logging.DEBUG,
     'info': logging.INFO,
     'warning': logging.WARNING,
@@ -32,18 +40,18 @@ logging_levels = {
     'critical': logging.CRITICAL,
     'notset': logging.NOTSET
 }
-server_func = gevent.wsgi.WSGIServer
-config_file = None # This holds our config file object
-config = {} # this holds our config dict
-wsgi_app = None #This holds our Flask app
-apps_resource = None
-app = None
-running = True
-channelmsgr = None
+SERVER_FUNC = gevent.wsgi.WSGIServer
+CONFIG_FILE = None # This holds our config file object
+CONFIG = {} # this holds our config dict
+WSGI_APP = None #This holds our Flask app
+APPS_RESOURCE = None
+APP = None
+RUNNING = True
+CHANNELMSGR = None
 
 ##-Classes-##
 class ToddlerClock:
-    def __init__(self,time_zone,channel_com=None,logger=None):
+    def __init__(self,time_zone,piglow_enabled,channel_com=None,logger=None):
         self.logger = logger or logging.getLogger("ToddlerClock")
         self.colors = ['blue', 'yellow', 'green', 'orange', 'white', 'red']
         self.timing = {}
@@ -57,8 +65,10 @@ class ToddlerClock:
             self.timing[c] = []
         self.channel_com = channel_com
         self.tz = time_zone
-        piglow.auto_update = True
-        piglow.clear();
+        self.piglow_enabled = piglow_enabled
+        if piglow_enabled:
+            piglow.auto_update = True
+            piglow.clear();
     def _active_interval(self,color):
         active = None
         ind = 0
@@ -110,7 +120,8 @@ class ToddlerClock:
         try:
             self.state[color]['on'] = True
             self.state[color]['brightness'] = brightness
-            piglow.colour(color,int(brightness))
+            if self.piglow_enabled:
+                piglow.colour(color,int(brightness))
             if override_intervals != None:
                 if self.state[color]['override_intervals'] != override_intervals:
                     self.state[color]['override_intervals'] = override_intervals
@@ -130,7 +141,8 @@ class ToddlerClock:
     def turn_off(self,color,override_intervals=None):
         try:
             if self.state[color]['on']:
-                piglow.colour(color,0)
+                if self.piglow_enabled:
+                    piglow.colour(color,0)
                 self.state[color]['on'] = False
                 self.state[color]['brightness'] = 0
             if override_intervals != None:
@@ -376,7 +388,7 @@ class WebsocketApi(WebSocketApplication):
             'change_light': self.change_light,
         }
         self.logger = LogContextAdapter(self.logger,{'context_data': self.conn_info})
-        channelmsgr.subscribe("status_changes",self)
+        CHANNELMSGR.subscribe("status_changes",self)
     def on_open(self):
         self.logger.info("Connection opened")
         try:
@@ -451,7 +463,7 @@ class WebsocketApi(WebSocketApplication):
                 self.logger.error("Error sending server_response 'Connected' msg:{}".format(exc_value),exc_info=True)
                 self.ws.close_connection()
     def on_close(self, reason):
-        channelmsgr.unsubscribe("status_changes",self)
+        CHANNELMSGR.unsubscribe("status_changes",self)
         self.logger.info("Connection Closed")
     def status(self,state=True,intervals=True,color=None,**kwargs):
         self.logger.debug("Gathering light states")
@@ -638,11 +650,11 @@ def jsonizer(obj):
         return obj.__repr__()
 
 def update_config():
-    config['intervals'] = tclock.timing
-    config_file.seek(0)
-    config_file.truncate()
-    config_file.write(json.dumps(config,indent=4,default=jsonizer))
-    config_file.flush()
+    CONFIG['intervals'] = tclock.timing
+    CONFIG_FILE.seek(0)
+    CONFIG_FILE.truncate()
+    CONFIG_FILE.write(json.dumps(CONFIG,indent=4,default=jsonizer))
+    CONFIG_FILE.flush()
 
 def init_rest_api():
     class RestLoggerPrepender:
@@ -682,14 +694,13 @@ def init_rest_api():
     #Initialize Flask based API
     rest_app=Flask("RestAPI",static_folder="{}/static".format(os.getcwd()))
     #Set Flask debug if needed
-    if config['api_rest_debug']:
+    if CONFIG['api_rest_debug']:
         rest_app.debug = True
     #Our special log wrapper to prepending context info
     rest_app.log = RestLoggerPrepender(rest_app.logger)
     @rest_app.route("/")
     def root():
         return rest_app.send_static_file('index.html')
-
     @rest_app.route("/status")
     def status():
         rest_app.log.debug("Gathering light states")
@@ -723,7 +734,6 @@ def init_rest_api():
             mimetype='application/json'
         )
         return resp
-
     @rest_app.route("/poll")
     def force_poll():
         rest_app.log.debug("Executing Poll")
@@ -734,7 +744,6 @@ def init_rest_api():
         }
         rest_app.log.debug("Poll completed, responding with: {}".format(js))
         return jsonify(js)
-
     @rest_app.route("/interval")
     def intervals():
         rest_app.log.debug("Gathering color change intervals")
@@ -747,7 +756,6 @@ def init_rest_api():
             mimetype='application/json'
         )
         return resp
-
     @rest_app.route("/interval/<color>")
     def interval(color):
         rest_app.log.debug("Gathering color change intervals for color: {}".format(color))
@@ -761,7 +769,6 @@ def init_rest_api():
             mimetype='application/json'
         )
         return resp
-
     @rest_app.route("/interval/<color>",methods=["POST"])
     def create_interval(color):
         js = {
@@ -808,7 +815,6 @@ def init_rest_api():
         resp = jsonify(js)
         resp.status_code = status_code
         return resp
-
     @rest_app.route("/interval/<color>/<interval_id>",methods=["PUT"])
     def update_interval(color,interval_id):
         js = {
@@ -857,7 +863,6 @@ def init_rest_api():
         resp = jsonify(js)
         resp.status_code = status_code
         return resp
-
     @rest_app.route("/interval/<color>/<interval_id>",methods=["DELETE"])
     def delete_interval(color,interval_id):
         js = {
@@ -890,7 +895,6 @@ def init_rest_api():
         resp = jsonify(js)
         resp.status_code = status_code
         return resp
-
     @rest_app.route("/light/<color>",methods=["PUT"])
     def set_light(color):
         js = {
@@ -940,11 +944,11 @@ def init_rest_api():
     return rest_app
 
 def init_websocket_api():
-    res_map = {
+    res_map = OrderedDict({
         '/+websocket': WebsocketApi,
-    }
-    if wsgi_app:
-        res_map['^(?!/+websocket)'] = wsgi_app
+    })
+    if WSGI_APP:
+        res_map['^(?!/+websocket)'] = WSGI_APP
     resource = Resource(res_map)
     cm = ChannelMgr()
     cm.add_channel("status_changes")
@@ -964,85 +968,90 @@ else:
     REAL_CONFIG_PATH=DEFAULT_CONFIG_PATH
 
 if not os.path.exists(REAL_CONFIG_PATH):
-    config_file = open(REAL_CONFIG_PATH,'w')
-    config_file.close()
+    CONFIG_FILE = open(REAL_CONFIG_PATH,'w')
+    CONFIG_FILE.close()
     new_config = True
 else:
     new_config = False
 
 try:
-    config_file = open(REAL_CONFIG_PATH,'r+')
+    CONFIG_FILE = open(REAL_CONFIG_PATH,'r+')
     if not new_config:
-        config = json.load(config_file)
-        for k in default_opts:
+        CONFIG = json.load(CONFIG_FILE)
+        for k in DEFAULT_OPTS:
             try:
-                t = config[k]
+                t = CONFIG[k]
                 del(t)
             except KeyError:
-                config[k] = default_opts[k]
+                CONFIG[k] = DEFAULT_OPTS[k]
     else:
-        config = dict(default_opts)
+        CONFIG = dict(DEFAULT_OPTS)
 except:
     print("Error reading in config file at: {}".format(REAL_CONFIG_PATH))
     raise
 
 #Initialize logger
 try:
-    log_level = int(config['log_level'])
+    LOG_LEVEL = int(CONFIG['log_level'])
 except ValueError:
     try:
-        log_level = logging_levels[config['log_level'].lower()]
+        LOG_LEVEL = LOGGING_LEVELS[CONFIG['log_level'].lower()]
     except:
         raise
 logging.basicConfig(
-    level=log_level,
+    level=LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("Main")
 
+#Check if piglow settings are ok
+if not PIGLOW_ENABLED and CONFIG['piglow_enabled']:
+    logger.error("Piglow module is NOT installed, but configuration wants to enable it.")
+    sys.exit(1)
+
 #Start APIs
 logger.info("Initializing APIs")
-if config['api_rest']:
+if CONFIG['api_rest']:
     logger.debug("Initializing REST API")
-    wsgi_app=init_rest_api()
+    WSGI_APP=init_rest_api()
     logger.debug("REST API Initialized")
-    app=wsgi_app
-    print("static_folder: {}".format(app.static_folder))
-if config['api_websocket']:
+    APP=WSGI_APP
+    logger.debug("Static folder set to be at: {}".format(APP.static_folder))
+if CONFIG['api_websocket']:
     logger.debug("Initializing WebSocket API")
-    apps_resource = init_websocket_api()
+    APPS_RESOURCE = init_websocket_api()
     logger.debug("WebSocket API Initialized")
 
 logger.info("Starting APIs")
-if apps_resource or wsgi_app:
-    if wsgi_app:
-        app = wsgi_app
-    if apps_resource:
-        app = apps_resource[0]
-        channelmsgr = apps_resource[1]
-        server_func = WebSocketServer
+if APPS_RESOURCE or WSGI_APP:
+    if WSGI_APP:
+        APP = WSGI_APP
+    if APPS_RESOURCE:
+        APP = APPS_RESOURCE[0]
+        CHANNELMSGR = APPS_RESOURCE[1]
+        SERVER_FUNC = WebSocketServer
     #Create a WSGI server
     logger.debug("Starting WSGI Server using: {}, listening on: {}:{}".format(
-            server_func.__name__,
-            config['api_listen'],
-            config['api_port']
+            SERVER_FUNC.__name__,
+            CONFIG['api_listen'],
+            CONFIG['api_port']
         )
     )
-    wsgi = server_func(
-        listener=(config['api_listen'], config['api_port']),
-        application=app
+    wsgi = SERVER_FUNC(
+        listener=(CONFIG['api_listen'], CONFIG['api_port']),
+        application=APP
     )
     #Start the WSGI server
     wsgi.start()
 
 #Initialize our clock
-logger.info("Initializing ToddlerClock with timezone: {}".format(config['time_zone']))
-tclock = ToddlerClock(config['time_zone'],channelmsgr)
+logger.info("Initializing ToddlerClock with timezone: {}".format(CONFIG['time_zone']))
+tclock = ToddlerClock(time_zone=CONFIG['time_zone'],channel_com=CHANNELMSGR,piglow_enabled=CONFIG['piglow_enabled'])
 
 #Load any intervals from the config file into our clock
 logger.info("Importing any configured intervals into the ToddlerClock")
-for c in config['intervals']:
-    for i in config['intervals'][c]:
+for c in CONFIG['intervals']:
+    for i in CONFIG['intervals'][c]:
         logger.debug("Found Interval for color: {} for: {}".format(c,i['time_interval']))
         from_time, to_time = i['time_interval'].replace(' => ',',').split(',')
         tclock.add_interval(c,from_time,to_time,i['brightness'],i['brightness_change_at'])
@@ -1052,7 +1061,7 @@ update_config()
 
 #Event Loop
 logger.info("Finished startup, Running...")
-while running:
+while RUNNING:
     #logger.debug("Polling ToddlerClock for needed state changes")
     tclock.poll()
     gevent.wait(timeout=10)
