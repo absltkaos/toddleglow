@@ -32,25 +32,36 @@
 <script src="/static/js/toddleglow.js"></script>
 
 </head>
-<body>
+<body id="body">
 
-<div id="api_mode" class="container">
-    <h4>API Mode:</h4>
-    <div class="container">
-    <strong>Rest</strong> <input id="api_mode_toggle" type="checkbox" data-toggle="toggle"> <strong>Websocket</strong>
-    </div>
-    <script>
-        $('#api_mode_toggle').bootstrapToggle({
-            on: 'Websocket',
-            off: 'Rest',
-            onstyle: "default",
-            offstyle: "default"
-        });
-    </script>
-</div>
 <div id="main_div" class="container">
-    <h2>Toddler Glow Clock</h2>
-    <div class="panel-group" id="config_accordion"></div>
+    <div id="top" class="row">
+        <div class="col-xs-8">
+            <h4>Screen Mode:</h4>
+            <input id="screen_mode_toggle" type="checkbox" data-toggle="toggle">
+        </div>
+        <div id="api_mode_toggle_div" class="col-xs-4">
+            <h4>API Mode:</h4>
+            <input id="api_mode_toggle" type="checkbox" data-toggle="toggle data-size="mini">
+        </div>
+        <script>
+            $('#api_mode_toggle').bootstrapToggle({
+                on: 'Websocket',
+                off: 'Rest',
+                onstyle: "default",
+                offstyle: "default"
+            });
+            $('#screen_mode_toggle').bootstrapToggle({
+                on: 'On',
+                off: 'Off',
+                onstyle: "default",
+                offstyle: "default"
+            });
+        </script>
+    </div>
+    <div class="panel-group" id="config_accordion">
+        <h2>Toddler Glow Clock</h2>
+    </div>
 </div>
 
 

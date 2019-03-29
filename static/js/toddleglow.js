@@ -1,6 +1,7 @@
 //Global vars
 tclock = null;
 ui_event_state = {};
+cur_states = {};
 ui_initialized = false;
 ui_initializing = false;
 
@@ -8,7 +9,7 @@ ui_initializing = false;
 //For interacting with the clock.
 function ToddlerClock(opts) {
     //api_url,api_timeout,api_mode,message_process_map,switch_callback
-    //--Private Parts...--//
+    //--Private Variabls...--//
     var url = null;
     var wsh = null;
     var ws_chk_interval = null;
@@ -20,6 +21,7 @@ function ToddlerClock(opts) {
     var _api_timeout = 10000;
     var _switch_callback = opts.switch_callback;
     var _message_process_map = opts.message_process_map;
+    //--Private Functions--//
     var _ws_connected_chk = function () {
         if (!wsh.connected()) {
             console.log("Websocket failed to connect, Trying to failback to 'rest' mode");
@@ -478,14 +480,29 @@ function ToddlerClock(opts) {
             }
         );
     }
-    //--Public parts--//
+    //--Public Variables--//
     this.api_url = "/";
     this.api_timeout = 10000;
+    //--Public Functions--//
     this.mode = function () {
         return mode;
     }
     this.status = function (params,success_callback,fail_callback) {
-        status(params,success_callback,fail_callback);
+        status(
+            params,
+            function(data,status=null,xhr=null) {
+                if (params.hasOwnProperty('color')) {
+                    cur_states[params['color']] = data.state;
+                }
+                else {
+                    cur_states = data.state;
+                }
+                if (success_callback) {
+                    success_callback(data,status,xhr);
+                }
+            },
+            fail_callback
+        );
     }
     this.poll = function (success_callback,fail_callback) {
         poll(success_callback,fail_callback);
@@ -503,7 +520,23 @@ function ToddlerClock(opts) {
         delete_interval(color,interval_id,success_callback,fail_callback);
     }
     this.light = function (color,state,brightness,override_intervals,success_callback,fail_callback) {
-        light(color,state,brightness,override_intervals,success_callback,fail_callback);
+        light(
+            color,
+            state,
+            brightness,
+            override_intervals,
+            function (data,status=null,xhr=null) {
+                cur_states[color] = {
+                    on: (state == "on") ? true : false,
+                    brightness: parseInt(brightness),
+                    override_intervals: override_intervals
+                };
+                if (success_callback) {
+                    success_callback(data,status,xhr);
+                }
+            },
+            fail_callback
+        );
     }
     this.switch_mode = function (apimode) {
         _switch_mode(apimode);
@@ -694,12 +727,17 @@ function WebsocketHelper(api_url,callback_timeout) {
 }
 
 //-- For manipulating the UI --//
-//Create our main tclock object
 $(document).ready(function(){
     var restRefreshIntvl = null;
+    //Create our main tclock object
     tclock = new ToddlerClock({
         message_process_map: {
             server_connected: function(data) {
+                cur_states = data.state;
+                for (var color in data.state) {
+                    var brightness = data.state[color]['brightness'];
+                    data.state[color]['brightness'] = parseInt(brightness);
+                }
                 if (!ui_initialized) {
                     if (!ui_initializing) {
                         ui_initializing = true;
@@ -713,12 +751,18 @@ $(document).ready(function(){
                     updateIntervalUI(data.intervals);
                 }
             },
-            update_states: updateLightStateUI,
+            update_states: function (data) {
+                if (data) {
+                    for (var color in data) {
+                        cur_states[color] = data[color];
+                    }
+                }
+                updateLightStateUI(data);
+            },
             update_intervals: updateIntervalUI
         },
         switch_callback: function(mode) {
             if (mode == "rest") {
-                
                 ui_event_state['api_mode'] = false;
                 $("#api_mode_toggle").bootstrapToggle('off');
                 ui_event_state['api_mode'] = true;
@@ -748,7 +792,7 @@ $(document).ready(function(){
             }
         }
     });
-    
+
     //Event handler to api mode toggle
     $('#api_mode_toggle').change(function(event) {
         if (ui_event_state['api_mode']) {
@@ -759,6 +803,15 @@ $(document).ready(function(){
                 tclock.switch_mode("rest")
             }
         }
+    });
+
+    //Event handler for screen mode toggle
+    $('#screen_mode_toggle').change(function(event) {
+        var screen_mode = 'off';
+        if ($('#screen_mode_toggle').is(":checked")) {
+            screen_mode = 'on';
+        }
+        setScreenMode(screen_mode);
     });
 });
 
@@ -1367,9 +1420,13 @@ function updateLightStateElems(state,color) {
     ui_event_state[color]['light_toggle']['change'] = false;
     if (state.override_intervals) {
         $('#' + color + '_light_toggle').bootstrapToggle('enable');
+        $('#' + color + '_brightness_slider').removeClass("hidden");
+        $('#' + color + '_brightness_slider').show();
     }
     else {
         $('#' + color + '_light_toggle').bootstrapToggle('disable');
+        $('#' + color + '_brightness_slider').hide();
+        $('#' + color + '_brightness_slider').addClass("hidden");
     }
     ui_event_state[color]['light_toggle']['change'] = true;
 }
@@ -1413,10 +1470,48 @@ function refreshStatesUI() {
     );
 }
 
+function blendColors() {
+    // This is pulled from https://gist.github.com/JordanDelcros/518396da1c13f75ee057#gistcomment-2075095
+    var args = Array.prototype.slice.call(arguments);
+    var base = [0, 0, 0, 0];
+    var mix;
+    var added;
+    while (added = args.shift()) {
+        if (typeof added[3] === 'undefined') {
+            added[3] = 1;
+        }
+        // check if both alpha channels exist.
+        if (base[3] && added[3]) {
+            mix = [0, 0, 0, 0];
+            // alpha
+            mix[3] = 1 - (1 - added[3]) * (1 - base[3]);
+            // red
+            mix[0] = Math.round((added[0] * added[3] / mix[3]) + (base[0] * base[3] * (1 - added[3]) / mix[3]));
+            // green
+            mix[1] = Math.round((added[1] * added[3] / mix[3]) + (base[1] * base[3] * (1 - added[3]) / mix[3]));
+            // blue
+            mix[2] = Math.round((added[2] * added[3] / mix[3]) + (base[2] * base[3] * (1 - added[3]) / mix[3]));
 
+        } else if (added) {
+            mix = added;
+        } else {
+            mix = base;
+        }
+        base = mix;
+    }
 
+    return mix;
+}
 
-
-
-
-
+function setScreenMode(mode) {
+    if (mode == "on") {
+        $('#config_accordion').fadeOut("slow");
+        $('#api_mode_toggle_div').fadeOut("slow");
+        $('#body').animate({backgroundColor: 'black'}, 'slow');
+    }
+    else {
+        $('#config_accordion').fadeIn("slow");
+        $('#api_mode_toggle_div').fadeIn("slow");
+        $('#body').animate({backgroundColor: 'white'}, 'slow');
+    }
+}
