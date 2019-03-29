@@ -4,6 +4,7 @@ import arrow
 import gevent.wsgi
 import json
 import sys
+import signal
 import os
 import logging
 from collections import OrderedDict
@@ -643,6 +644,11 @@ class LogContextAdapter(logging.LoggerAdapter):
 
 ##-Helper functions-##
 
+def sig_shutdown():
+    global RUNNING
+    logger.info("Signaling Shutdown")
+    RUNNING = False
+
 def jsonizer(obj):
     try:
         return obj._toJSON()
@@ -1004,6 +1010,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Main")
 
+#Initialize signal handlers
+gevent.signal(signal.SIGINT,sig_shutdown)
+gevent.signal(signal.SIGQUIT,sig_shutdown)
+
 #Check if piglow settings are ok
 if not PIGLOW_ENABLED and CONFIG['piglow_enabled']:
     logger.error("Piglow module is NOT installed, but configuration wants to enable it.")
@@ -1064,7 +1074,7 @@ logger.info("Finished startup, Running...")
 while RUNNING:
     #logger.debug("Polling ToddlerClock for needed state changes")
     tclock.poll()
-    gevent.wait(timeout=10)
+    gevent.wait(timeout=1)
 
 #Close down gevent servers
 logger.info("Shutting down..")
