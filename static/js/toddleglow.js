@@ -793,7 +793,7 @@ $(document).ready(function(){
         }
     });
 
-    //Event handler to api mode toggle
+    //Event handler for api mode toggle
     $('#api_mode_toggle').change(function(event) {
         if (ui_event_state['api_mode']) {
             if ($('#api_mode_toggle').is(":checked")) {
@@ -805,7 +805,7 @@ $(document).ready(function(){
         }
     });
 
-    //Event handler for screen mode toggle
+    //Event handler for screen light mode toggle
     $('#screen_mode_toggle').change(function(event) {
         var screen_mode = 'off';
         if ($('#screen_mode_toggle').is(":checked")) {
@@ -1432,6 +1432,9 @@ function updateLightStateElems(state,color) {
 }
 
 function updateLightStateUI(states,c) {
+    if ($('#screen_mode_toggle').is(':checked')){
+        setScreenColor();
+    }
     if(states.hasOwnProperty('on')) {
         updateLightStateElems(states,c);
     }
@@ -1470,44 +1473,95 @@ function refreshStatesUI() {
     );
 }
 
-function blendColors() {
-    // This is pulled from https://gist.github.com/JordanDelcros/518396da1c13f75ee057#gistcomment-2075095
-    var args = Array.prototype.slice.call(arguments);
-    var base = [0, 0, 0, 0];
-    var mix;
-    var added;
-    while (added = args.shift()) {
-        if (typeof added[3] === 'undefined') {
-            added[3] = 1;
-        }
-        // check if both alpha channels exist.
-        if (base[3] && added[3]) {
-            mix = [0, 0, 0, 0];
-            // alpha
-            mix[3] = 1 - (1 - added[3]) * (1 - base[3]);
-            // red
-            mix[0] = Math.round((added[0] * added[3] / mix[3]) + (base[0] * base[3] * (1 - added[3]) / mix[3]));
-            // green
-            mix[1] = Math.round((added[1] * added[3] / mix[3]) + (base[1] * base[3] * (1 - added[3]) / mix[3]));
-            // blue
-            mix[2] = Math.round((added[2] * added[3] / mix[3]) + (base[2] * base[3] * (1 - added[3]) / mix[3]));
+function mixColors(color1, color2, amount) {
+    //This is based pretty heavily on tinycolor.mix found here:
+    //https://github.com/bgrins/TinyColor
+    amount = (amount === 0) ? 0 : (amount || 50);
 
-        } else if (added) {
-            mix = added;
-        } else {
-            mix = base;
-        }
-        base = mix;
+    var rgb1 = {
+        r: color1[0],
+        g: color1[1],
+        b: color1[2],
+        a: color1[3],
+    }
+    var rgb2 = {
+        r: color2[0],
+        g: color2[1],
+        b: color2[2],
+        a: color2[3],
     }
 
-    return mix;
+    var p = amount / 100;
+    var rgba = {
+        r: parseInt(((rgb2.r - rgb1.r) * p) + rgb1.r),
+        g: parseInt(((rgb2.g - rgb1.g) * p) + rgb1.g),
+        b: parseInt(((rgb2.b - rgb1.b) * p) + rgb1.b),
+        a: ((rgb2.a - rgb1.a) * p) + rgb1.a
+    };
+    return [rgba.r,rgba.g,rgba.b,rgba.a];
+}
+
+function mixColorsMulti(color_list) {
+    var mixed_color
+    while (color = color_list.shift()) {
+        if (!mixed_color) {
+            mixed_color = color;
+            color = color_list.shift()
+            if (!color) {
+                //console.log("Returning (mid) color: '"+mixed_color+"'");
+                return mixed_color;
+                break
+            }
+        }
+        //console.log("Mixing color: '"+mixed_color+"' with '"+color);
+        mixed_color = mixColors(mixed_color,color);
+    }
+    //console.log("Returning (end) color: '"+mixed_color+"'");
+    return mixed_color;
+}
+
+function setScreenColor() {
+    var rgb_colors = {
+        blue:   [0,0,255,1],
+        green:  [0,255,0,1],
+        orange: [255,128,0,1],
+        red:    [255,0,0,1],
+        white:  [0,0,0,0,1],
+        yellow: [255,255,0,1]
+    };
+    var black = [0,0,0,1];
+    var blended_color = [black]; //default to black ("off")
+    var bness_total = 0;
+    var bness_avg;
+    var bness_rev;
+    var colors_to_combine = [];
+    for (var color in cur_states) {
+        if (cur_states[color]['on']) {
+            var c_rgb = rgb_colors[color];
+            //Caclulate alpha
+            //c_rgb.push(1-cur_states[color]['brightness']/255/4);
+            //c_rgb.push(1);
+            bness_total += cur_states[color]['brightness'];
+            colors_to_combine.push(c_rgb);
+        }
+    }
+    if (colors_to_combine.length >= 1) {
+        bness_avg = bness_total/colors_to_combine.length;
+        blended_color = mixColorsMulti(colors_to_combine);
+        //For now, ignore "brightness" for "Screen light"
+        //if (bness_avg < 254) {
+        //    bness_avg = parseInt(bness_avg/2);
+        //    blended_color = mixColorsMulti([blended_color,[bness_avg,bness_avg,bness_avg,1]]);
+        //}
+    }
+    $('#body').animate({backgroundColor: "rgba("+blended_color.join(',')+")"}, 'slow');
 }
 
 function setScreenMode(mode) {
     if (mode == "on") {
         $('#config_accordion').fadeOut("slow");
         $('#api_mode_toggle_div').fadeOut("slow");
-        $('#body').animate({backgroundColor: 'black'}, 'slow');
+        setScreenColor();
     }
     else {
         $('#config_accordion').fadeIn("slow");
