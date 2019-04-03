@@ -28,6 +28,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-toggle/2.2.2/js/bootstrap-toggle.min.js"></script>
 <!-- ClockPicker -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/clockpicker/0.0.7/bootstrap-clockpicker.min.js"></script>
+<!-- NoSleep -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/nosleep/0.6.0/NoSleep.min.js"></script>
 <!-- Toddler clock bits -->
 <script src="/static/js/toddleglow.js"></script>
 
@@ -38,22 +40,16 @@
     <div id="top" class="row">
         <div class="col-xs-8">
             <h4>Screen Light:</h4>
-            <input id="screen_mode_toggle" type="checkbox" data-toggle="toggle">
+            <input class="btn btn-default" id="screen_mode_toggle" type="button" value="Off" onclick="screenModeClick()">
         </div>
         <div id="api_mode_toggle_div" class="col-xs-4">
             <h4>API Mode:</h4>
-            <input id="api_mode_toggle" type="checkbox" data-toggle="toggle data-size="mini">
+            <input id="api_mode_toggle" type="checkbox" data-toggle="toggle" data-size="mini">
         </div>
         <script>
             $('#api_mode_toggle').bootstrapToggle({
                 on: 'Websocket',
                 off: 'Rest',
-                onstyle: "default",
-                offstyle: "default"
-            });
-            $('#screen_mode_toggle').bootstrapToggle({
-                on: 'On',
-                off: 'Off',
                 onstyle: "default",
                 offstyle: "default"
             });

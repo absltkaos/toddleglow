@@ -4,6 +4,8 @@ ui_event_state = {};
 cur_states = {};
 ui_initialized = false;
 ui_initializing = false;
+noSleep = null;
+screen_mode = "off";
 
 //--Classes...err... Protypes? err... object constructors?--//
 //For interacting with the clock.
@@ -729,6 +731,7 @@ function WebsocketHelper(api_url,callback_timeout) {
 //-- For manipulating the UI --//
 $(document).ready(function(){
     var restRefreshIntvl = null;
+    noSleep = new NoSleep();
     //Create our main tclock object
     tclock = new ToddlerClock({
         message_process_map: {
@@ -803,15 +806,6 @@ $(document).ready(function(){
                 tclock.switch_mode("rest")
             }
         }
-    });
-
-    //Event handler for screen light mode toggle
-    $('#screen_mode_toggle').change(function(event) {
-        var screen_mode = 'off';
-        if ($('#screen_mode_toggle').is(":checked")) {
-            screen_mode = 'on';
-        }
-        setScreenMode(screen_mode);
     });
 });
 
@@ -1432,7 +1426,7 @@ function updateLightStateElems(state,color) {
 }
 
 function updateLightStateUI(states,c) {
-    if ($('#screen_mode_toggle').is(':checked')){
+    if (screen_mode == 'on'){
         setScreenColor();
     }
     if(states.hasOwnProperty('on')) {
@@ -1555,6 +1549,22 @@ function setScreenColor() {
         //}
     }
     $('#body').animate({backgroundColor: "rgba("+blended_color.join(',')+")"}, 'slow');
+}
+
+function screenModeClick() {
+    if (screen_mode == "off") {
+        screen_mode = "on";
+        console.log("Enabling Screen Mode, and disabling screen sleep");
+        $('#screen_mode_toggle').val("On");
+        noSleep.enable();
+    }
+    else {
+        screen_mode = "off";
+        console.log("Disabling Screen mode, re-enabling screen sleep");
+        $('#screen_mode_toggle').val("Off");
+        noSleep.disable();
+    };
+    setScreenMode(screen_mode);
 }
 
 function setScreenMode(mode) {
