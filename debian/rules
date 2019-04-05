@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME = toddleglow
+
+# Add here any variable or target overrides you need.
+%:
+	dh $@ --with python2 --buildsystem=pybuild
+
+override_dh_clean:
+	dh_clean
+	rm -rf toddleglow.egg-info/
+
+override_dh_auto_test:
+	#No unittests for now
+	true

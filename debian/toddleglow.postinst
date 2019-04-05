@@ -1,0 +1,40 @@
+#!/bin/sh
+
+USERNAME='toddleglow'
+
+case "$1" in
+    configure)
+        adduser --system ${USERNAME} --home /var/lib/toddleglow
+        echo "Fixing permissions"
+        if [ ! -d /var/lib/toddleglow ] ; then
+            mkdir /var/lib/toddleglow
+        fi
+        chown -R ${USERNAME} /var/lib/toddleglow
+    ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+
+    ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+# This will only remove masks created by d-s-h on package removal.
+deb-systemd-helper unmask toddleglow.service >/dev/null || true
+
+# was-enabled defaults to true, so new installations run enable.
+if deb-systemd-helper --quiet was-enabled toddleglow.service; then
+        # Enables the unit on first installation, creates new
+        # symlinks on upgrades if the unit file has changed.
+        deb-systemd-helper enable toddleglow.service >/dev/null || true
+else
+        # Update the statefile to add new symlinks (if any), which need to be
+        # cleaned up on purge. Also remove old symlinks.
+        deb-systemd-helper update-state toddleglow.service >/dev/null || true
+fi
+if [ -d /run/systemd/system ]; then
+        systemctl --system daemon-reload >/dev/null || true
+        deb-systemd-invoke start toddleglow.service >/dev/null || true
+fi
+
