@@ -12,5 +12,5 @@
         "white": [], 
         "red": []
     }, 
-    "piglow_enabled": true
+    "piglow_enabled": false
 }

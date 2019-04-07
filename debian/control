@@ -10,6 +10,7 @@ X-Python3-Version: >= 3.4
 Package: toddleglow
 Architecture: all
 Depends: ${misc:Depends}, python-arrow, python-flask, python-gevent, python-gevent-websocket
+Suggests: python-piglow
 Description: A Toddler Clock that will change colors based on user specified
   time intervals. This can be used in combination with Rasbpian and a PiGlow
   (made by pimoroni, https://shop.pimoroni.com/products/piglow). Alternatively
