@@ -1,3 +1,12 @@
+toddleglow (0.5.2) unstable; urgency=low
+
+  Fix packaging so it actually includes the static resources
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  More debian package bits as well as a helper script for generating deb changelog from git commit history
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Sun, 7 Apr 2019 00:31:38 -0600 
+
 toddleglow (0.5.1) unstable; urgency=low
 
   More debian package bits as well as a helper script for generating deb changelog from git commit history
@@ -78,4 +87,4 @@ toddleglow (0.0.1) unstable; urgency=low
   Initial checkin
     - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
 
- -- Dan Farnsworth <absltkaos@gmail.com>  Fri, 30 Jun 2017 18:52:07 -0600
+ -- Dan Farnsworth <absltkaos@gmail.com>  Fri, 30 Jun 2017 18:52:07 -0600 
