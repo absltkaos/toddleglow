@@ -10,6 +10,7 @@ case "$1" in
             mkdir /var/lib/toddleglow
         fi
         chown -R ${USERNAME} /var/lib/toddleglow
+        chown ${USERNAME} /etc/toddleglow/config.json
     ;;
     abort-upgrade|abort-remove|abort-deconfigure)
 

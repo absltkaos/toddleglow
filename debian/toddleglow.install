@@ -1,2 +1,3 @@
 toddleglow.py /usr/bin
 config.json /etc/toddleglow
+static /var/lib/toddleglow

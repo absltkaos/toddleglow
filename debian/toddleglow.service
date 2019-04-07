@@ -2,6 +2,7 @@
 Description=ToddleGlow PiGlow or screen based toddler clock
 
 [Service]
+User=toddleglow
 WorkingDirectory=/etc/toddleglow
 ExecStart=/usr/bin/toddleglow.py /etc/toddleglow/config.json
 KillSignal=SIGINT

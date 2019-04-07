@@ -18,6 +18,7 @@ try:
 except ImportError:
     PIGLOW_ENABLED = False
 
+__version__ = 'v0.5.2'
 DEFAULT_CONFIG_PATH = "./config.json"
 CONFIG_PATH = ""
 REAL_CONFIG_PATH = DEFAULT_CONFIG_PATH
@@ -962,7 +963,11 @@ def init_websocket_api():
 
 ##-Main-##
 #Change into the directory where this script was run from:
-os.chdir(os.path.dirname(os.path.realpath(__file__)))
+MY_LOCATION = os.path.dirname(os.path.realpath(__file__))
+if os.path.isdir('{}/static'.format(MY_LOCATION)):
+    os.chdir(os.path.dirname(os.path.realpath(__file__)))
+elif os.path.isdir('/var/lib/toddleglow/static'):
+    os.chdir('/var/lib/toddleglow')
 
 #Load our config file
 if len(sys.argv) > 1:

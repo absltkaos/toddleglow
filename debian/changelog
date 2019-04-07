@@ -1,0 +1,90 @@
+toddleglow (0.5.2) unstable; urgency=low
+
+  Fix packaging so it actually includes the static resources
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  More debian package bits as well as a helper script for generating deb changelog from git commit history
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Sun, 7 Apr 2019 00:31:38 -0600 
+
+toddleglow (0.5.1) unstable; urgency=low
+
+  More debian package bits as well as a helper script for generating deb changelog from git commit history
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Add initial debian packaging bits
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Sun, 7 Apr 2019 00:14:05 -0600 
+
+toddleglow (0.5.0) unstable; urgency=low
+
+  Reorganize Javascript so that it is alphabetical and categorized
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Add NoSleep libary to prevent screen from sleeping when in screen mode
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Add basic color mixing for new Screen Light Mode
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Handle signals for CTRL+C etc..
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  New UI elements and fixes
+  New
+   * Screen mode toggle (Not fully pumbed yet)
+   * Added cur_states global var to keep track of current states of all UI
+   * Modify callbacks etc... to update new global cur_states variable
+  (Tested with websockets, need to test in Rest mode)
+   * New blendColors function
+  Fixes
+   * Brightness slider wasn't hiding or showing up when another browser
+  client checked the Override Intervals box
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Make 'piglow' module optional. Also more python3 compatible
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Thu, 4 Apr 2019 23:38:10 -0600 
+
+toddleglow (0.0.1) unstable; urgency=low
+
+  Added a way for systemd to stop the clock
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  IP Logging and systemd file
+   * Add in a better way to find the client IP, even when behind proxy.
+   * Added systemd file for auto start
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Added logging to the server and fixed UI bugs
+   * Server Changes:
+      * Now with logging!
+      * Made timezone configurable, but defaults to US/Mountain
+   * UI Changes:
+      * Added a switch for changing the API mode of the UI
+      * UI synchronization fixes to prevent api mode switching conflicting
+      * Fixed UI bug with new intervals updating the UI from JS instead of
+      * API response
+      * Fixed UI bug when override intervals check wasn't triggering an
+      * API event
+    - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
+  Added client processing of server initiated messages
+   * JS/Browser side
+     * Moved the initial UI creation from body onload to document.ready
+     * Changed params for creating ToddlerClock objects to be an object
+     * Added a message_process_map param for handling server side messages
+     * Made WebsocketHelper more robust with reconnects
+     * Fixed some race conditions when switching ToddlerClock modes
+     * Created updateIntervalUI for updating the interval bits of the UI
+     * Allow initializeState to accept data as an arg
+   * Server side
+     * Send the initial state of the clock on websocket open
+     * Send websocket events when the config/state of the clock changes
+     * Try and catch more possible WebSocketError exceptions
+    - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
+  Added in Javascript bits to connect to the server's websocket.
+    - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
+  Added websocket server, as well as configurable flags to turn the api on and off.
+    - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
+  Tweaked README
+    - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
+  Tweaked README, finished adding initial files
+    - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
+  Initial checkin
+    - Authored by: Dan Farnsworth <Dan.Farnsworth@virtustream.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Fri, 30 Jun 2017 18:52:07 -0600 
