@@ -1,0 +1,12 @@
+[Unit]
+Description=ToddleGlow PiGlow or screen based toddler clock
+
+[Service]
+WorkingDirectory=/etc/toddleglow
+ExecStart=/usr/bin/toddleglow.py /etc/toddleglow/config.json
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
