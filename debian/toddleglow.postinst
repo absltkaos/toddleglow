@@ -11,6 +11,9 @@ case "$1" in
         fi
         chown -R ${USERNAME} /var/lib/toddleglow
         chown ${USERNAME} /etc/toddleglow/config.json
+        if [ ! -f /etc/toddleglow/config.json ] ; then
+            cp /var/lib/toddleglow/examples/config.json /etc/toddleglow
+        fi
     ;;
     abort-upgrade|abort-remove|abort-deconfigure)
 
@@ -29,6 +32,7 @@ if deb-systemd-helper --quiet was-enabled toddleglow.service; then
         # Enables the unit on first installation, creates new
         # symlinks on upgrades if the unit file has changed.
         deb-systemd-helper enable toddleglow.service >/dev/null || true
+        deb-systemd-invoke restart toddleglow.service >/dev/null || true
 else
         # Update the statefile to add new symlinks (if any), which need to be
         # cleaned up on purge. Also remove old symlinks.

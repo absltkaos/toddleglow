@@ -1,3 +1,18 @@
+toddleglow (0.5.3) unstable; urgency=low
+
+  Don't manage /etc/toddleglow/config.json as part of the package
+  Debian 'conf' files will give a warning and prompt if they are part of a
+  package have been changed a user. ToddleGlow's config is really more of a state
+  file, so should be changed frequently. This will only copy the default bare
+  config if there is no config found during the 'configure' phase in the postinst
+  script
+  Also restart the service on debian package upgrade
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Update README.md
+    - Authored by: Dan Farnsworth <absltkaos@users.noreply.github.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Sun, 7 Apr 2019 23:28:19 -0600 
+
 toddleglow (0.5.2) unstable; urgency=low
 
   Fix packaging so it actually includes the static resources

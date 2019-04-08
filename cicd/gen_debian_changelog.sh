@@ -35,9 +35,9 @@ function deb_gen_changelog {
         vers=${vers#v}
         (
             echo -e "\n$pkgname (${vers}) unstable; urgency=low\n"
-            git log --pretty=format:'%s%n%b%n  - Authored by: %an <%ae>%n' ${range} | sed '/^Merge branch.*/,/^ \+- Authored by:.*/d ; /^New release: .*/,/^ \+- Authored by:.*/d ; /^$/d ; s/^/  /'
+            git log --pretty=format:'%s%n%b%n  - Authored by: %an <%ae>%n' ${range} | sed '/^Merge branch.*/,/^ \+- Authored by:.*/d ; /^New release: .*/,/^ \+- Authored by:.*/d ; /^Merge pull request.*/,/^ \+- Authored by:.*/d ; /^$/d ; s/^/  /'
             echo
-            git log --pretty=format:'%s%n -- %an <%ae>  %aD %n%n' ${range} | sed '/^Merge branch.*/,/^ \+-- .*/d ; /^New release: .*/,/^ \+-- .*/d ; /^$/d ; /^[^ ]/d' | head -n 1
+            git log --pretty=format:'%s%n -- %an <%ae>  %aD %n%n' ${range} | sed '/^Merge branch.*/,/^ \+-- .*/d ; /^Merge pull request.*/,/^ \+- Authored by:.*/d ; /^New release: .*/,/^ \+-- .*/d ; /^$/d ; /^[^ ]/d' | head -n 1
         )
     done | sed '1d;s/^ +$//'
 }
