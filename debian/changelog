@@ -1,3 +1,12 @@
+toddleglow (0.5.4) unstable; urgency=low
+
+  Add 'fullscreen' support when entering 'Screen mode'
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Add screenshots for README
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Tue, 9 Apr 2019 23:33:11 -0600 
+
 toddleglow (0.5.3) unstable; urgency=low
 
   Don't manage /etc/toddleglow/config.json as part of the package

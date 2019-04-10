@@ -1336,6 +1336,7 @@ function screenModeClick() {
         $('#screen_mode_toggle').val("Off");
         noSleep.disable();
     };
+    toggleFullScreen();
     setScreenMode(screen_mode);
 }
 
@@ -1500,6 +1501,21 @@ function setScreenMode(mode) {
         $('#config_accordion').fadeIn("slow");
         $('#api_mode_toggle_div').fadeIn("slow");
         $('#body').animate({backgroundColor: 'white'}, 'slow');
+    }
+}
+
+function toggleFullScreen() {
+    var doc = window.document;
+    var docEl = doc.documentElement;
+
+    var requestFullScreen = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullScreen || docEl.msRequestFullscreen;
+    var cancelFullScreen = doc.exitFullscreen || doc.mozCancelFullScreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
+
+    if(!doc.fullscreenElement && !doc.mozFullScreenElement && !doc.webkitFullscreenElement && !doc.msFullscreenElement) {
+        requestFullScreen.call(docEl);
+    }
+    else {
+        cancelFullScreen.call(doc);
     }
 }
 
