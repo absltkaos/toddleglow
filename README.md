@@ -29,4 +29,24 @@ Browse to the web UI: http://[ip of Pi]:8080
 
 The initial start up of the service will create a `config.json` file. You can edit it to suit your needs if you need to change listening address/port etc...
 
-[NOTE] Make sure you stop the application (Currently just, CTRL+C) before editing config.json.
+*[NOTE]* Make sure you stop the application (Currently just, CTRL+C) before editing config.json.
+# Screenshots
+## Desktop browser view
+### Main view of webui with a color that has an interval all set
+![Desktop Main](/img/desktop_with_interval.png)
+
+### Creating a new interval for when a color should be turned on.
+![Making Interval](/img/desktop_new_interval_time_select.png)
+
+### New interval all filled out.
+![Interval Filled Out](/img/desktop_new_interval_filledout.png)
+
+## Mobile browser view
+### Main view
+![Mobile Main](/img/mobile_main.png)
+
+### Viewing interval details
+![Mobile Interval Details](/img/mobile_interval_details_view.png)
+
+### New Screen mode (using the mobile phone's browser as the light source)
+![Mobile Screen Mode](/img/mobile_screen_mode.png)
