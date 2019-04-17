@@ -31,6 +31,14 @@ The initial start up of the service will create a `config.json` file. You can ed
 
 *[NOTE]* Make sure you stop the application (Currently just, CTRL+C) before editing config.json.
 # Screenshots
+## Raspberry Pi with PiGlow
+
+### Raspberry Pi w/ 3d printed lightdiffuser
+![Raspberry Pi lightdiffuser](/img/piglow_lightdiffuser.jpg)
+
+### Raspberry Pi underside
+![Raspberry Pi lightdiffuser bottom](/img/piglow_lightdiffuser_bottom.jpg)
+
 ## Desktop browser view
 ### Main view of webui with a color that has an interval all set
 ![Desktop Main](/img/desktop_with_interval.png)

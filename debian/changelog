@@ -1,3 +1,16 @@
+toddleglow (0.5.5) unstable; urgency=low
+
+  Fix Small bug, README, and cicd scripts
+   * Fix small bug where toggling fullscreen can get confused.
+   * Add cicd scripts for building deb
+   * Update Readme with more screenshots
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Update README.md
+  Add screenshots to the readme
+    - Authored by: Dan Farnsworth <absltkaos@users.noreply.github.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Tue, 16 Apr 2019 21:49:07 -0600 
+
 toddleglow (0.5.4) unstable; urgency=low
 
   Add 'fullscreen' support when entering 'Screen mode'
