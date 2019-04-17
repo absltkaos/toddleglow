@@ -34,9 +34,16 @@ if ! check_tag "v${version}" ; then
         echo "  ${tag:1}"
     done
     echo 'THIS WILL BUILD AN UNOFFICAL INTERIM BUILD'
-    existing_tag=false
+    read -p 'Are you sure? (yes/no): ' resp
+    if [ "${resp,,}" == 'yes' ] ; then
+        existing_tag=false
+    else
+        echo "Aborting.."
+        cd - >/dev/null
+        exit 1
+    fi
 fi
-cd -
+cd - >/dev/null
 
 #BUild a docker image
 docker build -t "$image_name" -f - ${basedir} <<EOF
