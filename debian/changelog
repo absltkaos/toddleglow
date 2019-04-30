@@ -1,3 +1,12 @@
+toddleglow (0.5.6) unstable; urgency=low
+
+  Fixed issue when using piglow, where the daemon user can't access
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+  Add prompt to build_deb.sh
+    - Authored by: Dan Farnsworth <absltkaos@gmail.com>
+
+ -- Dan Farnsworth <absltkaos@gmail.com>  Tue, 30 Apr 2019 10:30:38 -0600 
+
 toddleglow (0.5.5) unstable; urgency=low
 
   Fix Small bug, README, and cicd scripts

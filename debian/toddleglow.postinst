@@ -4,16 +4,24 @@ USERNAME='toddleglow'
 
 case "$1" in
     configure)
-        adduser --system ${USERNAME} --home /var/lib/toddleglow
+        if ! /usr/bin/getent passwd toddleglow > /dev/null 2>&1 ; then
+            adduser --system ${USERNAME} --home /var/lib/toddleglow
+        fi
+        if  /usr/bin/getent group i2c ; then
+            if ! /usr/bin/getent group i2c | grep -q ${USERNAME} ; then
+                echo "Found i2c group, adding user to group, so it can access the GPIO interface"
+                usermod -a -G i2c ${USERNAME}
+            fi
+        fi
         echo "Fixing permissions"
         if [ ! -d /var/lib/toddleglow ] ; then
             mkdir /var/lib/toddleglow
         fi
         chown -R ${USERNAME} /var/lib/toddleglow
-        chown ${USERNAME} /etc/toddleglow/config.json
         if [ ! -f /etc/toddleglow/config.json ] ; then
             cp /var/lib/toddleglow/examples/config.json /etc/toddleglow
         fi
+        chown ${USERNAME} /etc/toddleglow/config.json
     ;;
     abort-upgrade|abort-remove|abort-deconfigure)
 

@@ -18,7 +18,7 @@ try:
 except ImportError:
     PIGLOW_ENABLED = False
 
-__version__ = '0.5.5'
+__version__ = '0.5.6'
 DEFAULT_CONFIG_PATH = "./config.json"
 CONFIG_PATH = ""
 REAL_CONFIG_PATH = DEFAULT_CONFIG_PATH

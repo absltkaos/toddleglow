@@ -33,12 +33,16 @@ function deb_gen_changelog {
         tag=${range_split[1]}
         vers=${nvers:-$tag}
         vers=${vers#v}
-        (
+        change_snippet=$(
             echo -e "\n$pkgname (${vers}) unstable; urgency=low\n"
-            git log --pretty=format:'%s%n%b%n  - Authored by: %an <%ae>%n' ${range} | sed '/^Merge branch.*/,/^ \+- Authored by:.*/d ; /^New release: .*/,/^ \+- Authored by:.*/d ; /^Merge pull request.*/,/^ \+- Authored by:.*/d ; /^$/d ; s/^/  /'
+            git log --pretty=format:'%s%n%b%n  - Authored by: %an <%ae>%n' ${range} | sed '/^Merge branch.*/,/^ \+- Authored by:.*/d ; /^Merge pull request.*/,/^ \+- Authored by:.*/d  ; /^New release: .*/,/^ \+- Authored by:.*/d ; /^$/d ; s/^/  /'
             echo
-            git log --pretty=format:'%s%n -- %an <%ae>  %aD %n%n' ${range} | sed '/^Merge branch.*/,/^ \+-- .*/d ; /^Merge pull request.*/,/^ \+- Authored by:.*/d ; /^New release: .*/,/^ \+-- .*/d ; /^$/d ; /^[^ ]/d' | head -n 1
+            git log --pretty=format:'%s%n -- %an <%ae>  %aD %n%n' ${range} | sed '/^Merge branch.*/,/^ \+-- .*/d ; /^New release: .*/,/^ \+-- .*/d ; /^$/d ; /^[^ ]/d' | head -n 1
         )
+        #This avoids a duplicate version with no changes
+        if [ $(echo "$change_snippet" | sed '/^$/d' | wc -l) -gt 1 ] ; then
+            echo "$change_snippet"
+        fi
     done | sed '1d;s/^ +$//'
 }
 
