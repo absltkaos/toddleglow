@@ -12,5 +12,6 @@
         "white": [], 
         "red": []
     }, 
-    "piglow_enabled": false
+    "piglow_enabled": false,
+    "time_zone": "US/Mountain"
 }

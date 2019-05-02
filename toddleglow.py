@@ -18,7 +18,7 @@ try:
 except ImportError:
     PIGLOW_ENABLED = False
 
-__version__ = '0.5.6'
+__version__ = '0.5.7'
 DEFAULT_CONFIG_PATH = "./config.json"
 CONFIG_PATH = ""
 REAL_CONFIG_PATH = DEFAULT_CONFIG_PATH
@@ -105,7 +105,7 @@ class ToddlerClock:
                     bkeys = sorted(list(i['brightness_change_at']),key=self._human_keys)
                     bkeys.reverse()
                     for bt in bkeys:
-                        ti = TimeInterval(bt,i['time_interval'].to_time)
+                        ti = TimeInterval(bt,i['time_interval'].to_time,time_zone=self.tz)
                         if ti.now_in_interval():
                             del(ti)
                             brightness = i['brightness_change_at'][bt]
@@ -172,7 +172,7 @@ class ToddlerClock:
                 raise ValueError("ERROR: color: {} 'from_time' is within interval: {}".format(color,ti))
             if ti.in_interval(to_time):
                 raise ValueError("ERROR: color: {} 'to_time' is within interval: {}".format(color,ti))
-        new_ti = TimeInterval(from_time,to_time)
+        new_ti = TimeInterval(from_time,to_time,time_zone=self.tz)
         bc = brightness_changes
         if bc:
             for b in bc:
@@ -278,7 +278,7 @@ class ToddlerClock:
         return dict(l)
 
 class TimeInterval:
-    def __init__(self,from_time,to_time):
+    def __init__(self,from_time,to_time,time_zone):
         self.from_time = from_time
         self.to_time = to_time
         from_h,from_m = from_time.split(':')
@@ -295,6 +295,7 @@ class TimeInterval:
         self.dur_mins = self.to_mins - self.from_mins
         self.dur_h = int(self.dur_mins/60)
         self.dur_m = self.dur_mins%60
+        self.tz = time_zone
     def __repr__(self):
         return 'TimeInterval("{}","{}")'.format(self.from_time,self.to_time)
     def __str__(self):
@@ -302,7 +303,7 @@ class TimeInterval:
     def _toJSON(self):
         return self.__str__()
     def now_in_interval(self):
-        cur_datetime = arrow.utcnow().to('US/Mountain')
+        cur_datetime = arrow.utcnow().to(self.tz)
         cur_time = cur_datetime.strftime("%H:%M")
         return self.in_interval(cur_time)
     def get_duration(self,ret_format=None):
