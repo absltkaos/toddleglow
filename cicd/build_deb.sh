@@ -1,9 +1,17 @@
 #!/bin/bash
 
+last_change=$(git rev-parse HEAD)
+last_release_tag=$(git tag -l 'v[0-9]*' | sort -rV | head -n 1)
+if [ ! -z "$last_release_tag" ] ; then
+    beg_range="${last_release_tag}.."
+fi
+changes_since_release=$(git log --pretty=format:'%s%n' ${beg_range}${last_change} | sed "/^Merge branch '.\+' into '.\+'/d ; /^$/d")
+release_ver=''
 basedir="$(realpath "$(dirname "$0")")"
 existing_tag=true
 image_name='toddleglow:build-0.0.1'
 proj_root="$(dirname "$basedir")"
+new_release=false
 version="$1"
 
 ##- Functions -##
@@ -33,17 +41,31 @@ if ! check_tag "v${version}" ; then
     for tag in $(git tag -l 'v*' | sort -V) ; do
         echo "  ${tag:1}"
     done
-    echo 'THIS WILL BUILD AN UNOFFICAL INTERIM BUILD'
-    read -p 'Are you sure? (yes/no): ' resp
+    read -p 'Is this a new release (If yes, then a new tag will be created)? (yes/no): ' resp
     if [ "${resp,,}" == 'yes' ] ; then
+        new_release=true
         existing_tag=false
     else
-        echo "Aborting.."
-        cd - >/dev/null
-        exit 1
+        echo 'THIS WILL BUILD AN UNOFFICAL INTERIM BUILD'
+        read -p 'Are you sure? (yes/no): ' resp
+        if [ "${resp,,}" == 'yes' ] ; then
+            existing_tag=false
+        else
+            echo "Aborting.."
+            cd - >/dev/null
+            exit 1
+        fi
     fi
 fi
 cd - >/dev/null
+
+if [ $(echo "$changes_since_release" | wc -l) -gt 0 ] ; then
+    if [ "$new_release" == true ] ; then
+        echo -e "Building a new release with the following changes included:\n----"
+        echo "$changes_since_release" | nl -s '. '
+        echo -e '----\n'
+    fi
+fi
 
 #BUild a docker image
 docker build -t "$image_name" -f - ${basedir} <<EOF
@@ -55,6 +77,8 @@ RUN apt-get update && \
     git \
     dh-python \
     dh-systemd \
+    curl \
+    jq \
     python-all \
     python-setuptools
 EOF
@@ -77,3 +101,13 @@ docker run -it --rm -v "$proj_root:/code" "$image_name" bash -c "
     echo 'Files built:'
     ls -l /code/build
 "
+build_rc=$?
+if [ "$build_rc" -ne 0 ] ; then
+    exit $?
+fi
+if [ "$new_release" == true ] ; then
+    echo "Creating new release for github"
+    docker run -it --rm -v "$proj_root:/code" "$image_name" /code/cicd/create_release.sh "${version}" "$changes_since_release"
+    release_rc=$?
+    exit $release_rc
+fi
